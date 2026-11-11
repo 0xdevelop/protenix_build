@@ -1,17 +1,22 @@
+# Protenix 批量推理单元（Type=oneshot）。
+# 主进程 = Go protenixd：预检后以子进程运行 `protenix pred -i $PROTENIX_INPUT -o $PROTENIX_OUTPUT_DIR $PROTENIX_PRED_EXTRA_ARGS`，
+# stdout/stderr 进 journal（journalctl -u protenix-oneshot），子进程退出码原样作为 unit 结果。
+# 作业参数在 conf/protenix.env 里改；失败不自动重启（避免反复占用 GPU），由 StartLimit 兜底。
 [Unit]
-Description=Protenix oneshot batch job (CLI run-to-completion)
-After=network-online.target
+Description=Protenix batch inference job (protenix pred via Go protenixd, oneshot)
+After=local-fs.target network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
 User=root
 WorkingDirectory=/opt/protenix_build/prefix/protenix
-EnvironmentFile=-/opt/protenix_build/prefix/protenix/conf/protenix.env
-# 生产替换为实际 pred 参数；默认 --help 冒烟
-ExecStart=/opt/protenix_build/prefix/protenix/bin/protenix-run --help
+EnvironmentFile=/opt/protenix_build/prefix/protenix/conf/protenix.env
+ExecStart=/opt/protenix_build/prefix/protenix/bin/protenixd pred -i ${PROTENIX_INPUT} -o ${PROTENIX_OUTPUT_DIR} $PROTENIX_PRED_EXTRA_ARGS
+TimeoutStartSec=infinity
 Nice=5
-TimeoutStartSec=0
 
 [Install]
 WantedBy=multi-user.target

@@ -13,6 +13,7 @@ target:
 
 install_prefix: /opt/protenix_build
 
+# 字段名沿用 host_capability；语义=目标运行栈（非「仅宿主锚点、产品降级」）
 host_capability:
   cuda: "13"
   python_host_anchor: "3.14"
@@ -20,7 +21,7 @@ host_capability:
   product_python_min: "3.14"
   product_python_max: "3.14"
   product_python_preferred: "3.14"
-  torch_cuda_in_prefix: "cu12"
+  torch_cuda_in_prefix: "cu130"
   note: >
     目标运行栈：CUDA 13 / Python 3.14 / Node 24 LTS。
     交付：原生安装 + systemd；不以 Docker 为主路径。
@@ -42,12 +43,12 @@ products:
     install_script: example_files/install_protenix.sh
     prefix_install_script: scripts/install_prefix_protenix.sh
     env_policy: latest_submodule
-    torch_hint: "2.7.1"
+    torch_hint: "2.14.1+cu130"
     cli_name: protenix
     wrapper_name: protenix-run
     supervisor_bin: protenixd
     supervisor_cmd_path: cmd/protenixd
-    systemd_type: simple
+    systemd_type: oneshot
     product_python: "3.14"
 
   - name: pxdesign
@@ -66,7 +67,7 @@ products:
     wrapper_name: pxdesign-run
     supervisor_bin: pxdesignd
     supervisor_cmd_path: cmd/pxdesignd
-    systemd_type: simple
+    systemd_type: oneshot
     product_python: "3.14"
 
 paths:

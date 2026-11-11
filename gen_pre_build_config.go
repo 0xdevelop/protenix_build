@@ -28,14 +28,14 @@ type preBuildConfig struct {
 		Goos   string `yaml:"goos"`
 		Goarch string `yaml:"goarch"`
 	} `yaml:"target"`
-	InstallPrefix string `yaml:"install_prefix"`
+	InstallPrefix  string `yaml:"install_prefix"`
 	HostCapability struct {
-		CUDA              string `yaml:"cuda"`
-		PythonHostAnchor  string `yaml:"python_host_anchor"`
-		NodeLTS           string `yaml:"node_lts"`
-		ProductPythonMin  string `yaml:"product_python_min"`
-		ProductPythonMax  string `yaml:"product_python_max"`
-		Note              string `yaml:"note"`
+		CUDA             string `yaml:"cuda"`
+		PythonHostAnchor string `yaml:"python_host_anchor"`
+		NodeLTS          string `yaml:"node_lts"`
+		ProductPythonMin string `yaml:"product_python_min"`
+		ProductPythonMax string `yaml:"product_python_max"`
+		Note             string `yaml:"note"`
 	} `yaml:"host_capability"`
 	EnvStrategy              string        `yaml:"env_strategy"`
 	EnvStrategyNote          string        `yaml:"env_strategy_note"`
@@ -67,11 +67,11 @@ type productSpec struct {
 }
 
 type pathSpec struct {
-	BuildRoot        string `yaml:"build_root"`
-	UploadTmpDir     string `yaml:"upload_tmp_dir"`
-	PrefixRoot       string `yaml:"prefix_root"`
-	ExampleFilesDir  string `yaml:"example_files_dir"`
-	ScriptsDir       string `yaml:"scripts_dir"`
+	BuildRoot       string `yaml:"build_root"`
+	UploadTmpDir    string `yaml:"upload_tmp_dir"`
+	PrefixRoot      string `yaml:"prefix_root"`
+	ExampleFilesDir string `yaml:"example_files_dir"`
+	ScriptsDir      string `yaml:"scripts_dir"`
 }
 
 func main() {
@@ -272,9 +272,10 @@ func validateConfig(cfg *preBuildConfig, requireConcreteTarget bool) error {
 				return fmt.Errorf("products[%s].%s required", p.Name, field.k)
 			}
 		}
-		// 主 unit 为 simple + Go supervisor；oneshot_unit 仅批作业模板
-		if p.SystemdType != "simple" {
-			return fmt.Errorf("products[%s].systemd_type must be simple (Go supervisor resident), got %q", p.Name, p.SystemdType)
+		// 两个 unit 都是 Type=oneshot：service_unit = Go 预检冒烟（环境缺失即失败），oneshot_unit = 真实批作业。
+		// 上游无常驻入口，禁止交付 Type=simple 空转常驻（2026-11-11 15:50 监督纠正）。
+		if p.SystemdType != "oneshot" {
+			return fmt.Errorf("products[%s].systemd_type must be oneshot (no resident upstream workload), got %q", p.Name, p.SystemdType)
 		}
 		switch p.Name {
 		case "protenix":

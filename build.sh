@@ -143,7 +143,7 @@ torch_hint=${torch_hint}
 cli_name=${cli}
 wrapper_name=${wrapname}
 supervisor_bin=${superv_bin}
-systemd_primary=simple
+systemd_smoke=oneshot
 systemd_batch=oneshot
 commit=${commit_hash}
 build_time=${build_time}
@@ -179,11 +179,12 @@ EOF
   cat > "${out_dir}/docs/README_RUN.md" <<EOF
 # ${name} 包装包
 
-- 主服务：Type=simple → \`bin/${superv_bin}\`（Go supervisor，可 systemctl status）
-- 批作业：Type=oneshot → \`bin/${wrapname}\`（上游 CLI）
-- 目标机：\`bash scripts/$(basename "${prefix_install}")\` 装 Python 栈（无 GPU 默认可跳过）
+- 冒烟：\`$(basename "${service}")\` Type=oneshot → \`bin/${superv_bin}\`（Go 预检；CLI/环境缺失即 failed）
+- 批作业：\`$(basename "${oneshot}")\` Type=oneshot → \`bin/${superv_bin} <cli 参数>\`（退出码透传，journalctl 可查）
+- 手动调试入口：\`bin/${wrapname}\`（shell wrapper，直接 exec 上游 CLI）
+- 目标机：\`bash scripts/$(basename "${prefix_install}")\` 装 Python 3.14 + CUDA 13 栈（失败即非零退出，不跳过 GPU）
 - 再：\`INSTALL_SYSTEMD=1 bash install_${name}.sh\`
-- 冒烟：\`${wrapname} --help\`；或 \`systemctl start ${name}-oneshot.service\`
+- 冒烟：\`systemctl start $(basename "${service}")\`，结果看 \`systemctl status\` / \`journalctl -u\`
 
 env_policy=${policy}
 EOF

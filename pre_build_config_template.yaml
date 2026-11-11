@@ -6,12 +6,13 @@
 # 编排：仅 Go + shell；上游 Python 只在 submodule/prefix 环境内跑。
 #
 # 双环境策略（不可合并）：
-# - prefix/protenix：最新 Protenix submodule（torch 2.7.1 链）
+# - prefix/protenix：最新 Protenix submodule（Python 3.14 + torch 2.14.1+cu130，覆盖见 constraints/py314-cu130.txt）
 # - prefix/pxdesign：官方钉死 Protenix v0.5.0+pxd + torch 2.3.1
 #   （不要用最新 submodule 填 pxdesign env）
 #
 # 目标运行栈（用户硬约束）：CUDA 13 / Python 3.14 / Node 24 LTS。
-# 主服务：Go supervisor（protenixd/pxdesignd）Type=simple 常驻；oneshot 仅批作业模板。
+# systemd：全部 Type=oneshot。<name>.service = Go 预检冒烟（环境缺失即 failed）；<name>-oneshot.service = 真实批作业。
+# 上游没有常驻服务入口，不交付 Type=simple 常驻单元。
 # 上游官方旧 pin（torch 版本等）与目标栈冲突时记为待收敛债务，不得覆写硬约束。
 
 project:
@@ -34,7 +35,7 @@ host_capability:
   product_python_min: "3.14"
   product_python_max: "3.14"
   product_python_preferred: "3.14"
-  torch_cuda_in_prefix: "cu12"
+  torch_cuda_in_prefix: "cu130"
   note: >
     目标运行栈：CUDA 13 / Python 3.14 / Node 24 LTS。
     交付：原生安装 + systemd；不以 Docker 为主路径。
@@ -56,12 +57,12 @@ products:
     install_script: example_files/install_protenix.sh
     prefix_install_script: scripts/install_prefix_protenix.sh
     env_policy: latest_submodule
-    torch_hint: "2.7.1"
+    torch_hint: "2.14.1+cu130"
     cli_name: protenix
     wrapper_name: protenix-run
     supervisor_bin: protenixd
     supervisor_cmd_path: cmd/protenixd
-    systemd_type: simple
+    systemd_type: oneshot
     product_python: "3.14"
 
   - name: pxdesign
@@ -80,7 +81,7 @@ products:
     wrapper_name: pxdesign-run
     supervisor_bin: pxdesignd
     supervisor_cmd_path: cmd/pxdesignd
-    systemd_type: simple
+    systemd_type: oneshot
     product_python: "3.14"
 
 paths:

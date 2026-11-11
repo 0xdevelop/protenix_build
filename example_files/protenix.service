@@ -1,19 +1,22 @@
+# Protenix 环境冒烟单元（Type=oneshot，非常驻）。
+# 主进程 = Go protenixd：定位 prefix 内 protenix CLI 并执行 `protenix --help` 预检后退出。
+# 环境缺失（env 文件、venv、CLI 任一缺失或 --help 失败）→ 非零退出 → unit 进入 failed。
+# 这一层只证明“CLI 能启动”，不代表推理可用；真实推理用 protenix-oneshot.service。
+# 上游 protenix 没有常驻服务/队列消费入口，因此本仓不交付 Type=simple 常驻单元（未实现、未验收）。
 [Unit]
-Description=Protenix supervisor (Go protenixd, Type=simple)
-After=network-online.target
-Wants=network-online.target
+Description=Protenix smoke check (Go protenixd preflight, oneshot)
+After=local-fs.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
 
 [Service]
-Type=simple
+Type=oneshot
 User=root
-Restart=on-failure
-RestartSec=5s
 WorkingDirectory=/opt/protenix_build/prefix/protenix
-EnvironmentFile=-/opt/protenix_build/prefix/protenix/conf/protenix.env
-Environment=PROTENIX_PREFIX=/opt/protenix_build/prefix/protenix
+# 不加 "-" 前缀：env 文件缺失即启动失败
+EnvironmentFile=/opt/protenix_build/prefix/protenix/conf/protenix.env
 ExecStart=/opt/protenix_build/prefix/protenix/bin/protenixd
-ExecStop=/bin/kill -TERM $MAINPID
-LimitNOFILE=102400
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target
