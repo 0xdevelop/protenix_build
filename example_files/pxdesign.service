@@ -1,0 +1,19 @@
+[Unit]
+Description=PXDesign supervisor (Go pxdesignd, Type=simple)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+WorkingDirectory=/opt/protenix_build/prefix/pxdesign
+EnvironmentFile=-/opt/protenix_build/prefix/pxdesign/conf/pxdesign.env
+Environment=PXDESIGN_PREFIX=/opt/protenix_build/prefix/pxdesign
+ExecStart=/opt/protenix_build/prefix/pxdesign/bin/pxdesignd
+ExecStop=/bin/kill -TERM $MAINPID
+LimitNOFILE=102400
+
+[Install]
+WantedBy=multi-user.target

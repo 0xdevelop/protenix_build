@@ -1,0 +1,19 @@
+[Unit]
+Description=Protenix supervisor (Go protenixd, Type=simple)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+WorkingDirectory=/opt/protenix_build/prefix/protenix
+EnvironmentFile=-/opt/protenix_build/prefix/protenix/conf/protenix.env
+Environment=PROTENIX_PREFIX=/opt/protenix_build/prefix/protenix
+ExecStart=/opt/protenix_build/prefix/protenix/bin/protenixd
+ExecStop=/bin/kill -TERM $MAINPID
+LimitNOFILE=102400
+
+[Install]
+WantedBy=multi-user.target

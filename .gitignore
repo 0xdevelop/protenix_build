@@ -1,2 +1,19 @@
 # 源码树由 submodule 管理；本地检出内容按约定忽略（gitlink / .gitmodules 仍由仓库跟踪）
 build_srcs/
+
+# 构建与本地产物
+build/
+tmp/
+prefix/
+
+# Go 本地工具链/缓存（若放在仓内调试）
+*.exe
+*.test
+*.out
+
+.DS_Store
+.idea/
+.vscode/
+.trae/
+*.log
+logs/

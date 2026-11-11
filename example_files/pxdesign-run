@@ -1,0 +1,35 @@
+#!/bin/bash
+# PXDesign CLI wrapper：激活钉死链独立 prefix 后 exec 上游 pxdesign（批任务入口）。
+set -euo pipefail
+
+PREFIX="${PXDESIGN_PREFIX:-/opt/protenix_build/prefix/pxdesign}"
+ENV_FILE="${PREFIX}/conf/pxdesign.env"
+VENV_ACTIVATE="${PREFIX}/venv/bin/activate"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
+
+export TOOL_WEIGHTS_ROOT="${TOOL_WEIGHTS_ROOT:-${PREFIX}/tool_weights}"
+export PROTENIX_DATA_ROOT_DIR="${PROTENIX_DATA_ROOT_DIR:-${PREFIX}/protenix_data}"
+if [[ -d "${PREFIX}/cutlass" ]]; then
+  export CUTLASS_PATH="${CUTLASS_PATH:-${PREFIX}/cutlass}"
+fi
+
+if [[ -f "${VENV_ACTIVATE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${VENV_ACTIVATE}"
+fi
+
+if [[ -x "${PREFIX}/venv/bin/pxdesign" ]]; then
+  exec "${PREFIX}/venv/bin/pxdesign" "$@"
+fi
+if command -v pxdesign >/dev/null 2>&1; then
+  exec pxdesign "$@"
+fi
+
+echo "[pxdesign-run] pxdesign CLI not found; run scripts/install_prefix_pxdesign.sh first" >&2
+exit 127

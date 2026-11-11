@@ -1,0 +1,17 @@
+[Unit]
+Description=PXDesign oneshot batch job (CLI run-to-completion)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/protenix_build/prefix/pxdesign
+EnvironmentFile=-/opt/protenix_build/prefix/pxdesign/conf/pxdesign.env
+# 生产替换为实际 pipeline 参数；默认 --help 冒烟
+ExecStart=/opt/protenix_build/prefix/pxdesign/bin/pxdesign-run --help
+Nice=5
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

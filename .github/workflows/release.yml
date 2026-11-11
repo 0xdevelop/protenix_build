@@ -1,0 +1,65 @@
+# 三段式发版占位（release → Build → RemoveOldRelease）。本阶段不触发、不发版。
+name: Release_Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      UPLOAD_URL: ${{ steps.stepCreateRelease.outputs.upload_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Get latest tag
+        run: |
+          echo "LATEST_TAG=$(git tag | grep -v '^latest$' | sort -V | tail -n1)" >> $GITHUB_ENV
+
+      - name: Step GitHub release
+        id: stepCreateRelease
+        uses: ncipollo/release-action@v1
+        with:
+          skipIfReleaseExists: 'true'
+          tag: ${{ env.LATEST_TAG }}
+          name: ${{ env.LATEST_TAG }}
+          body: "protenix_build packaging release (placeholder)"
+
+  Build:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: CheckOut
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '>=1.25.0'
+
+      - name: Build linux amd64 + arm64 packs
+        shell: /usr/bin/bash -e {0}
+        run: |
+          chmod a+x ./build.sh ./gen_pre_build_config.sh
+          ./gen_pre_build_config.sh all
+          bash ./build.sh release linux_amd64
+          bash ./build.sh release linux_arm64
+
+      - name: Upload binaries
+        uses: george012/upload_github_release_assets_action@latest
+        with:
+          path: ./build/upload_tmp_dir/*.zip
+
+  RemoveOldRelease:
+    runs-on: ubuntu-latest
+    needs: Build
+    steps:
+      - name: Placeholder prune
+        run: |
+          echo "RemoveOldRelease placeholder — wire prune logic when enabling releases"

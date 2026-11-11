@@ -1,0 +1,34 @@
+#!/bin/bash
+# Protenix CLI wrapper：激活独立 prefix 后 exec 上游 protenix（批任务入口）。
+set -euo pipefail
+
+PREFIX="${PROTENIX_PREFIX:-/opt/protenix_build/prefix/protenix}"
+ENV_FILE="${PREFIX}/conf/protenix.env"
+VENV_ACTIVATE="${PREFIX}/venv/bin/activate"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
+
+export PROTENIX_ROOT_DIR="${PROTENIX_ROOT_DIR:-${PREFIX}/data}"
+if [[ -d "${PREFIX}/cutlass" ]]; then
+  export CUTLASS_PATH="${CUTLASS_PATH:-${PREFIX}/cutlass}"
+fi
+
+if [[ -f "${VENV_ACTIVATE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${VENV_ACTIVATE}"
+fi
+
+if [[ -x "${PREFIX}/venv/bin/protenix" ]]; then
+  exec "${PREFIX}/venv/bin/protenix" "$@"
+fi
+if command -v protenix >/dev/null 2>&1; then
+  exec protenix "$@"
+fi
+
+echo "[protenix-run] protenix CLI not found; run scripts/install_prefix_protenix.sh first" >&2
+exit 127

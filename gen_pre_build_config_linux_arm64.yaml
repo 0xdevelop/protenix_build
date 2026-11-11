@@ -1,0 +1,83 @@
+# 由 gen_pre_build_config 固化：linux/arm64
+# 双环境策略见 env_strategy_note；本文件可手改后由工具 -validate 校验。
+
+project:
+  name: protenix_build
+  version: v0.0.1
+
+run_mode: release
+
+target:
+  goos: "linux"
+  goarch: "arm64"
+
+install_prefix: /opt/protenix_build
+
+host_capability:
+  cuda: "13"
+  python_host_anchor: "3.14"
+  node_lts: "24"
+  product_python_min: "3.11"
+  product_python_max: "3.13"
+  product_python_preferred: "3.11|3.12"
+  torch_cuda_in_prefix: "cu12"
+  note: >
+    宿主 CUDA 13 提供驱动/设备；prefix 内装 cu12 torch wheel。
+    产品 venv 用 3.11/3.12（可到 3.13）；禁止 3.14 装钉死 torch。
+    Node 24 仅机房锚点，不参与本链。PXDesign 官方 install.sh 不认 CUDA 13，勿原样调用。
+
+env_strategy: separate_prefix_envs
+env_strategy_note: >
+  protenix 与 pxdesign 必须两套独立 prefix 环境；
+  protenix 跟 build_srcs/protenix（最新，torch 2.7.1）；
+  pxdesign 钉死 Protenix@v0.5.0+pxd + torch==2.3.1，不复用最新 submodule 工作树。
+
+products:
+  - name: protenix
+    src_path: build_srcs/protenix
+    build_subdir: protenix
+    service_unit: example_files/protenix.service
+    oneshot_unit: example_files/protenix-oneshot.service
+    env_file: example_files/protenix.env
+    wrapper: example_files/protenix-run
+    install_script: example_files/install_protenix.sh
+    prefix_install_script: scripts/install_prefix_protenix.sh
+    env_policy: latest_submodule
+    torch_hint: "2.7.1"
+    cli_name: protenix
+    wrapper_name: protenix-run
+    supervisor_bin: protenixd
+    supervisor_cmd_path: cmd/protenixd
+    systemd_type: simple
+    product_python: "3.11-3.12"
+
+  - name: pxdesign
+    src_path: build_srcs/pxdesign
+    build_subdir: pxdesign
+    service_unit: example_files/pxdesign.service
+    oneshot_unit: example_files/pxdesign-oneshot.service
+    env_file: example_files/pxdesign.env
+    wrapper: example_files/pxdesign-run
+    install_script: example_files/install_pxdesign.sh
+    prefix_install_script: scripts/install_prefix_pxdesign.sh
+    env_policy: pinned_protenix_v0_5_0_pxd
+    pinned_protenix_ref: v0.5.0+pxd
+    torch_hint: "2.3.1"
+    cli_name: pxdesign
+    wrapper_name: pxdesign-run
+    supervisor_bin: pxdesignd
+    supervisor_cmd_path: cmd/pxdesignd
+    systemd_type: simple
+    product_python: "3.11-3.12"
+
+paths:
+  build_root: build
+  upload_tmp_dir: build/upload_tmp_dir
+  prefix_root: prefix
+  example_files_dir: example_files
+  scripts_dir: scripts
+
+# 本阶段 build.sh 默认跳过完整 GPU/pip；目标机执行 prefix_install_script。
+skip_prefix_install_in_build: true
+delivery: zip_and_systemd
+delivery_note: 主交付为 zip + systemd；不以 Docker 为主路径。
