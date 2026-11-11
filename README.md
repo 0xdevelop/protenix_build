@@ -34,8 +34,11 @@ git submodule update --init --recursive
 
 ## 服务形态
 
-- **主 unit**（`*.service`）：Go supervisor `protenixd` / `pxdesignd`，`Type=simple`，可 `systemctl status`
-- **批作业**（`*-oneshot.service`）：`Type=oneshot` + `*-run` 调上游 CLI
+- **冒烟 unit**（`protenix.service` / `pxdesign.service`）：`Type=oneshot`，主进程 Go `protenixd` / `pxdesignd` 预检 CLI 后退出；环境缺失即 failed。
+- **批作业**（`*-oneshot.service`）：`Type=oneshot`，`protenixd pred -n ${PROTENIX_MODEL} ...`，退出码透传，`journalctl -u` 可查。
+- 上游没有常驻服务入口，**不交付 Type=simple 常驻 unit**。
+- 模型版本单一切换点：`conf/protenix.env` 的 `PROTENIX_MODEL`（默认 v1；v2 需授权权重）。
+- 验收记录：`docs/acceptance_protenix_gb10.md`。
 
 ## gen / build（双 arch）
 
