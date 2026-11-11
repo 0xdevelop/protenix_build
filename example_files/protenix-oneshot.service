@@ -1,5 +1,5 @@
 # Protenix 批量推理单元（Type=oneshot）。
-# 主进程 = Go protenixd：预检后以子进程运行 `protenix pred -i $PROTENIX_INPUT -o $PROTENIX_OUTPUT_DIR $PROTENIX_PRED_EXTRA_ARGS`，
+# 主进程 = Go protenixd：预检后以子进程运行 `protenix pred -i $PROTENIX_INPUT -o $PROTENIX_OUTPUT_DIR -n $PROTENIX_MODEL $PROTENIX_PRED_EXTRA_ARGS`，
 # stdout/stderr 进 journal（journalctl -u protenix-oneshot），子进程退出码原样作为 unit 结果。
 # 作业参数在 conf/protenix.env 里改；失败不自动重启（避免反复占用 GPU），由 StartLimit 兜底。
 [Unit]
@@ -14,7 +14,7 @@ Type=oneshot
 User=root
 WorkingDirectory=/opt/protenix_build/prefix/protenix
 EnvironmentFile=/opt/protenix_build/prefix/protenix/conf/protenix.env
-ExecStart=/opt/protenix_build/prefix/protenix/bin/protenixd pred -i ${PROTENIX_INPUT} -o ${PROTENIX_OUTPUT_DIR} $PROTENIX_PRED_EXTRA_ARGS
+ExecStart=/opt/protenix_build/prefix/protenix/bin/protenixd pred -i ${PROTENIX_INPUT} -o ${PROTENIX_OUTPUT_DIR} -n ${PROTENIX_MODEL} $PROTENIX_PRED_EXTRA_ARGS
 TimeoutStartSec=infinity
 Nice=5
 
