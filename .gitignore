@@ -1,0 +1,2 @@
+# 源码树由 submodule 管理；本地检出内容按约定忽略（gitlink / .gitmodules 仍由仓库跟踪）
+build_srcs/

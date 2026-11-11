@@ -1,0 +1,6 @@
+[submodule "build_srcs/protenix"]
+	path = build_srcs/protenix
+	url = git@github.com:bytedance/Protenix.git
+[submodule "build_srcs/pxdesign"]
+	path = build_srcs/pxdesign
+	url = git@github.com:bytedance/PXDesign.git
