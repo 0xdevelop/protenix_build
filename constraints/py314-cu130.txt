@@ -1,0 +1,69 @@
+# constraints/py314-cu130.txt
+# Protenix（build_srcs/protenix requirements.txt）在 Python 3.14 / CUDA 13.0 / aarch64(GB10) 上的外层覆盖文件。
+# 用法：uv pip install --override constraints/py314-cu130.txt ...
+#   上游 setup.py 把 requirements.txt 里的 "==" 钉位原样写进 install_requires，
+#   普通 constraints（-c）无法放宽 "=="，所以这里按 uv 的 --override 语义使用：本文件条目整体替换上游同名要求。
+# 原则：不改 submodule；每条覆盖写明原因；能保持上游大版本就保持（只放宽到第一个有 cp314 aarch64 wheel 的同系列版本）。
+# 已核实日期：2026-11-11（PyPI + https://download.pytorch.org/whl/cu130）。
+
+# --- PyTorch 栈：上游 torch==2.7.1/torchvision==0.22.1 无 cp314、无 cu130。
+# 锚定 2.14.1+cu130（cu130 索引里 cp314 aarch64 最新版，~/comfyui-venv 已在 GB10 上验证可用）。
+torch==2.14.1+cu130
+# torchvision 0.29.1+cu130 与 torch 2.14.1 配套（cu130 索引 cp314 aarch64 有 wheel）。
+torchvision==0.29.1+cu130
+# torchaudio：cu130 索引 / PyPI 都没有与 torch 2.14 配套的 cp314 版本（cu130 最新 2.11.0，钉 torch==2.11）。
+# 上游 protenix/runner 代码里没有任何 import torchaudio，属于无用依赖，按 uv 惯例用永假 marker 移除。
+torchaudio; sys_platform == "never"
+# triton：上游钉 3.3.1（无 cp314）；torch 2.14.1 自身要求 triton~=3.8.0，跟随 torch。
+triton>=3.8.0,<3.9
+
+# --- cuEquivariance：上游 cuequivariance-ops-torch-cu12==0.8.0 是 CUDA 12 构建，换成 cu13 变体。
+cuequivariance-ops-torch-cu12; sys_platform == "never"
+# cu13 变体自 0.8 起提供；0.13.0 有 cp314 manylinux_2_28_aarch64 wheel。
+cuequivariance-ops-torch-cu13>=0.8.0
+# 与 ops 包版本配套（纯 Python wheel）。
+cuequivariance-torch>=0.8.0
+
+# --- 科学计算/结构生物学库：上游钉位版本没有 cp314 wheel，放宽到同大版本内有 cp314 aarch64 wheel 的版本。
+# pandas 2.3.1 无 cp314 wheel；2.3.3 起有。保持 2.x，不跨到 3.x（3.x 有 API 破坏性变化）。
+pandas>=2.3.1,<3
+# PyYAML 6.0.2 无 cp314 wheel；6.0.3 起有。
+PyYAML>=6.0.2,<7
+# matplotlib 3.10.5 无 cp314 aarch64 wheel；3.10.x 后续版本有。保持 3.10 系列。
+matplotlib>=3.10.5,<3.11
+# rdkit 2025.9.3 无 cp314 aarch64 wheel；放宽到有 wheel 的新版本。
+rdkit>=2025.9.3
+# biotite：保持上游钉位 1.4.0（不放宽）。1.4.0 没有 cp314 wheel，在本机用 Cython 从 sdist 编译（已验证可编译）。
+# 不能放宽到 1.5+：已实测 biotite 1.8.0 下 `protenix pred` 报
+#   AttributeError: 'biotite.structure.BondList' object has no attribute '_bonds'
+# （上游 protenix/data 代码直接访问 BondList._bonds 私有属性，新版 biotite 已移除），推理只产出 ERR/ 而退出码仍为 0。
+biotite==1.4.0
+# gemmi 0.6.7 无 cp314 wheel；0.7.x 有。
+gemmi>=0.6.7,<0.8
+# scikit-learn 1.7.1 无 cp314 wheel；1.7.2 起有。保持 1.7 系列。
+scikit-learn>=1.7.1,<1.8
+# numpy：上游钉 2.4.1（有 cp314 wheel）；放宽到 2.4.x 补丁版，避免与其它包的下限冲突。
+numpy>=2.4.1,<2.5
+# optree 0.17.0：放宽到有 cp314 aarch64 wheel 的版本。
+optree>=0.17.0
+# protobuf 6.31.1 是 abi3 wheel，本可用；放宽到 6.x 补丁版以兼容 wandb 等的下限。
+protobuf>=6.31.1,<7
+
+# --- 只有源码包（sdist）的依赖：允许在本机源码编译，不改版本或只放宽到更新的补丁版。
+# scikit-learn-extra 0.3.0 只有 sdist，3.14 下源码编译。
+scikit-learn-extra>=0.3.0
+# deepspeed 0.17.5 只有 sdist（setup.py 需要 import torch，安装脚本对它关闭构建隔离）。
+# 放宽到新版本：老版本 setup.py 与 torch 2.14 / CUDA 13 的版本检查不兼容的风险更高。
+deepspeed>=0.17.5
+
+# --- 纯 Python / 工具类依赖：上游 "==" 钉位放宽为下限，避免与 3.14 新版传递依赖冲突。
+ml_collections>=1.1.0
+tqdm>=4.67.1
+ipywidgets>=8.1.7,<9
+py3Dmol>=2.5.2
+biopython>=1.85
+modelcif>=1.4
+pdbeccdutils>=1.0.0
+icecream>=2.1.7
+ipdb>=0.13.13
+wandb>=0.21.1
