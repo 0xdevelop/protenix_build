@@ -1,0 +1,24 @@
+diff -ru a/pxdesign/pxd_server/server_extended_mode.py b/pxdesign/pxd_server/server_extended_mode.py
+--- a/pxdesign/pxd_server/server_extended_mode.py
++++ b/pxdesign/pxd_server/server_extended_mode.py
+@@ -279,7 +279,7 @@
+         "--hard_afsr_cutoff",
+         type=float,
+         default=[15, 5],
+-        help="hard case sr cutoff (0-5%, 5-15%, >15%)",
++        help="hard case sr cutoff (0-5%%, 5-15%%, >15%%)",
+     )
+     parser.add_argument("--save_path", type=str, default="./server_extended_mode.png")
+ 
+diff -ru a/pxdesign/pxd_server/server_preview_mode.py b/pxdesign/pxd_server/server_preview_mode.py
+--- a/pxdesign/pxd_server/server_preview_mode.py
++++ b/pxdesign/pxd_server/server_preview_mode.py
+@@ -168,7 +168,7 @@
+         "--hard_sr_cutoff",
+         type=float,
+         default=[15, 5],
+-        help="hard case sr cutoff (0-5%, 5-15%, >15%)",
++        help="hard case sr cutoff (0-5%%, 5-15%%, >15%%)",
+     )
+     parser.add_argument("--save_path", type=str, default="./server_preview_mode.png")
+ 

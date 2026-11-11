@@ -1,0 +1,42 @@
+diff -ru a/pxdbench/tools/af2/main_af2_complex.py b/pxdbench/tools/af2/main_af2_complex.py
+--- a/pxdbench/tools/af2/main_af2_complex.py
++++ b/pxdbench/tools/af2/main_af2_complex.py
+@@ -92,7 +92,7 @@
+             )
+             permute_generated_min_complex_rmsd(output_pdb, ori_design_pdb, output_pdb)
+             with open(output_stats_json, "w") as f:
+-                json.dump(stats, f)
++                json.dump(stats, f, default=float)
+ 
+         prediction_stats[model_num] = stats
+ 
+@@ -232,7 +232,7 @@
+         )
+ 
+         with open(args.output, "w") as f:
+-            json.dump(results, f)
++            json.dump(results, f, default=float)
+ 
+         print(f"Successfully completed AF2 binder complex prediction!")
+ 
+diff -ru a/pxdbench/tools/af2/main_af2_monomer.py b/pxdbench/tools/af2/main_af2_monomer.py
+--- a/pxdbench/tools/af2/main_af2_monomer.py
++++ b/pxdbench/tools/af2/main_af2_monomer.py
+@@ -77,7 +77,7 @@
+             # save pdb and stats
+             prediction_model.save_pdb(output_pdb)
+             with open(output_stats_json, "w") as f:
+-                json.dump(stats, f)
++                json.dump(stats, f, default=float)
+         prediction_stats[model_num] = stats
+ 
+     return prediction_stats
+@@ -221,7 +221,7 @@
+         )
+ 
+         with open(args.output, "w") as f:
+-            json.dump(results, f)
++            json.dump(results, f, default=float)
+ 
+         print(f"Successfully completed AF2 binder only prediction!")
+ 

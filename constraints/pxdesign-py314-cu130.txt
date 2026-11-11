@@ -1,0 +1,34 @@
+# constraints/pxdesign-py314-cu130.txt
+# PXDesign 独立 prefix（prefix/pxdesign/venv，与 prefix/protenix 分开，不合并）在 Python 3.14 / CUDA 13 / aarch64 上的外层覆盖。
+# 依赖来源：build_srcs/pxdesign/requirements.txt + 上游 install.sh（Protenix@v0.5.0+pxd、PXDesignBench@v0.1.2、
+#           ColabDesign、jax[cuda]、dm-haiku/optax/transformers 等）。用法同 py314-cu130.txt（uv --override）。
+# 每条写原因；能保持上游版本就保持。
+
+# --- PyTorch：上游 torch==2.3.1（cu12，无 cp314）→ 与 prefix/protenix 同一锚点
+torch==2.14.1+cu130
+triton>=3.8.0,<3.9
+# nvidia-cublas-cu12：CUDA 12 库，CUDA 13 栈由 torch 依赖的 cu13 库提供，移除
+nvidia-cublas-cu12; sys_platform == "never"
+
+# --- numpy：上游 numpy==1.26.3 无 cp314 wheel，且 1.26 源码不支持 3.14；放宽到 2.x（与 jax/新 scipy 一致）
+numpy>=2.0,<2.5
+
+# --- 结构生物学库（Protenix v0.5.0+pxd 的钉位）
+# biotite==1.0.1：无 cp314 wheel，尝试保持原版本源码编译（protenix 访问 BondList._bonds 私有属性，新版已移除）
+biotite==1.0.1
+# biopython==1.83：无 cp314 wheel，放宽到有 cp314 aarch64 wheel 的版本
+biopython>=1.85
+# modelcif==0.7：纯 Python，保持
+modelcif==0.7
+# matplotlib==3.9.2：无 cp314 wheel，放宽到 3.10 系列
+matplotlib>=3.10.5,<3.11
+# protobuf==3.20.2：太旧，与 wandb/transformers 新版冲突，放宽到 6.x
+protobuf>=3.20.2,<7
+
+# --- JAX 栈（AF2 过滤器，ColabDesign）：上游 jax[cuda]==0.4.29（cu12、无 cp314）→ 新版 jax + CUDA 13 插件
+jax[cuda13]>=0.7
+# dm-haiku==0.0.13 / optax==0.2.5：与 jax 0.4.x 配套；新 jax 下需要新版本
+dm-haiku>=0.0.13
+optax>=0.2.5
+# transformers==4.51.3：纯 Python，保持（tokenizers 0.21 有 abi3 wheel）
+transformers==4.51.3
