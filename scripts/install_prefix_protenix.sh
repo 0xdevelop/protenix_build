@@ -2,12 +2,12 @@
 # 目标机执行：在独立 prefix 安装最新 Protenix submodule 运行栈（torch 2.7.1 链）。
 # 编排仅 shell；上游 Python 只在本 prefix venv 内跑。
 #
-# 宿主 CUDA 13 + prefix 内 cu12 torch wheel；产品 venv 优先 3.11/3.12（可到 3.13）。
-# 禁止用宿主 3.14 装钉死 torch==2.7.1（无 cp314 wheel）。Node 不参与本链。
+# 目标运行栈（用户硬约束）：CUDA 13 / Python 3.14 / Node 24 LTS。
+# 上游 torch wheel 若尚未提供 cp314，属待收敛债务，不得把目标改回 3.11–3.13。
 #
 # 用法：
 #   bash scripts/install_prefix_protenix.sh
-#   PROTENIX_PYTHON=/usr/bin/python3.12 bash scripts/install_prefix_protenix.sh
+#   PROTENIX_PYTHON=/usr/bin/python3.14 bash scripts/install_prefix_protenix.sh
 #   SKIP_PIP=1 bash scripts/install_prefix_protenix.sh   # 只建目录，不装依赖
 set -euo pipefail
 
@@ -16,17 +16,13 @@ PREFIX="${PROTENIX_PREFIX:-${ROOT}/prefix/protenix}"
 SRC="${PROTENIX_SRC:-${ROOT}/build_srcs/protenix}"
 PREFERRED_PYTHONS=(
   "${PROTENIX_PYTHON:-}"
-  python3.11
-  python3.12
-  python3.13
-  /usr/bin/python3.11
-  /usr/bin/python3.12
-  /usr/bin/python3.13
+  python3.14
+  /usr/bin/python3.14
 )
 
 echo "[install_prefix_protenix] prefix=${PREFIX}"
 echo "[install_prefix_protenix] src=${SRC}"
-echo "[install_prefix_protenix] note: host may have python3.14, but product env MUST be 3.11-3.13 (torch 2.7.1 has no cp314 wheel)"
+echo "[install_prefix_protenix] target runtime: CUDA 13 / Python 3.14 / Node 24 LTS"
 
 mkdir -p "${PREFIX}/data" "${PREFIX}/cutlass" "${PREFIX}/logs" "${PREFIX}/conf" "${PREFIX}/bin" "${PREFIX}/scripts"
 
@@ -41,11 +37,11 @@ pick_python() {
     [[ -z "${ver}" ]] && continue
     major="${ver%%.*}"
     minor="${ver##*.}"
-    if [[ "${major}" -eq 3 && "${minor}" -ge 11 && "${minor}" -le 13 ]]; then
+    if [[ "${major}" -eq 3 && "${minor}" -eq 14 ]]; then
       echo "${cand}"
       return 0
     fi
-    echo "[install_prefix_protenix] skip ${cand} (version ${ver}; need 3.11-3.13, not 3.14+)" >&2
+    echo "[install_prefix_protenix] skip ${cand} (version ${ver}; hard constraint requires Python 3.14)" >&2
   done
   return 1
 }
@@ -72,9 +68,8 @@ fi
 
 PY="$(pick_python || true)"
 if [[ -z "${PY}" ]]; then
-  echo "[install_prefix_protenix] FAIL: no usable Python 3.11-3.13 found." >&2
-  echo "[install_prefix_protenix] host python3.14 cannot install torch==2.7.1 (no cp314 wheel)." >&2
-  echo "[install_prefix_protenix] install python3.12 (or 3.11/3.13) then re-run; do NOT force 3.14." >&2
+  echo "[install_prefix_protenix] FAIL: no usable Python 3.14 found (hard constraint)." >&2
+  echo "[install_prefix_protenix] install python3.14 then re-run, or set PROTENIX_PYTHON=/path/to/python3.14" >&2
   exit 1
 fi
 

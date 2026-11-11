@@ -17,20 +17,19 @@ host_capability:
   cuda: "13"
   python_host_anchor: "3.14"
   node_lts: "24"
-  product_python_min: "3.11"
-  product_python_max: "3.13"
-  product_python_preferred: "3.11|3.12"
+  product_python_min: "3.14"
+  product_python_max: "3.14"
+  product_python_preferred: "3.14"
   torch_cuda_in_prefix: "cu12"
   note: >
-    宿主 CUDA 13 提供驱动/设备；prefix 内装 cu12 torch wheel。
-    产品 venv 用 3.11/3.12（可到 3.13）；禁止 3.14 装钉死 torch。
-    Node 24 仅机房锚点，不参与本链。PXDesign 官方 install.sh 不认 CUDA 13，勿原样调用。
+    目标运行栈：CUDA 13 / Python 3.14 / Node 24 LTS。
+    交付：原生安装 + systemd；不以 Docker 为主路径。
+    上游官方 install/torch pin 若尚未对齐 Python 3.14 或 CUDA 13，下一阶段收敛，不在此改写目标。
 
 env_strategy: separate_prefix_envs
 env_strategy_note: >
-  protenix 与 pxdesign 必须两套独立 prefix 环境；
-  protenix 跟 build_srcs/protenix（最新，torch 2.7.1）；
-  pxdesign 钉死 Protenix@v0.5.0+pxd + torch==2.3.1，不复用最新 submodule 工作树。
+  protenix 与 pxdesign 必须两套独立 prefix 环境；仅二者依赖 Python；
+  本仓编排走 Go + shell。目标栈以 host_capability（CUDA 13 / Python 3.14 / Node 24）为准。
 
 products:
   - name: protenix
@@ -49,7 +48,7 @@ products:
     supervisor_bin: protenixd
     supervisor_cmd_path: cmd/protenixd
     systemd_type: simple
-    product_python: "3.11-3.12"
+    product_python: "3.14"
 
   - name: pxdesign
     src_path: build_srcs/pxdesign
@@ -68,7 +67,7 @@ products:
     supervisor_bin: pxdesignd
     supervisor_cmd_path: cmd/pxdesignd
     systemd_type: simple
-    product_python: "3.11-3.12"
+    product_python: "3.14"
 
 paths:
   build_root: build

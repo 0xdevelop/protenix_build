@@ -202,8 +202,20 @@ func validateConfig(cfg *preBuildConfig, requireConcreteTarget bool) error {
 	if cfg.HostCapability.CUDA == "" || cfg.HostCapability.PythonHostAnchor == "" || cfg.HostCapability.NodeLTS == "" {
 		return fmt.Errorf("host_capability.cuda / python_host_anchor / node_lts required")
 	}
+	// 用户硬约束：目标运行栈 CUDA 13 / Python 3.14 / Node 24 LTS
+	if cfg.HostCapability.CUDA != "13" || cfg.HostCapability.PythonHostAnchor != "3.14" || cfg.HostCapability.NodeLTS != "24" {
+		return fmt.Errorf("runtime hard constraint requires cuda=13 python_host_anchor=3.14 node_lts=24, got cuda=%q python=%q node=%q",
+			cfg.HostCapability.CUDA, cfg.HostCapability.PythonHostAnchor, cfg.HostCapability.NodeLTS)
+	}
 	if cfg.HostCapability.ProductPythonMin == "" || cfg.HostCapability.ProductPythonMax == "" {
 		return fmt.Errorf("host_capability.product_python_min/max required")
+	}
+	if cfg.HostCapability.ProductPythonMin != "3.14" || cfg.HostCapability.ProductPythonMax != "3.14" {
+		return fmt.Errorf("product python target must be 3.14 (hard constraint), got min=%q max=%q",
+			cfg.HostCapability.ProductPythonMin, cfg.HostCapability.ProductPythonMax)
+	}
+	if cfg.Delivery != "" && cfg.Delivery != "zip_and_systemd" {
+		return fmt.Errorf("delivery must be zip_and_systemd (no docker main path), got %q", cfg.Delivery)
 	}
 	if requireConcreteTarget {
 		if cfg.Target.Goos == "" || strings.Contains(cfg.Target.Goos, "{{") {

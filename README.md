@@ -1,6 +1,18 @@
 # protenix_build
 
-跨平台包装构建仓：submodule 接入上游，产出 **zip + systemd** 可安装包（主路径非 Docker）。
+跨平台包装构建仓：submodule 接入上游，本机/服务器**原生安装** + **systemd system 服务**交付（**不以 Docker 为主路径**）。
+
+## 架构硬约束（用户口径，勿改写）
+
+| 项 | 约定 |
+|----|------|
+| 目标运行栈 | **CUDA 13**、**Python 3.14**、**Node 24 LTS** |
+| 交付形态 | 原生安装 + systemd system 服务（可观测底层进程、系统级可控） |
+| Docker | 尽可能不用；docker-compose / Dockerfile 不作为主路径 |
+| 语言分工 | 仅 `protenix` / `pxdesign` 依赖 Python；本仓编排尽量 **Go + shell**，不引入 Python 构建编排堆 |
+| 源码 | `build_srcs/*` 为 submodule；不改 submodule 内代码；`build_srcs/` 进 `.gitignore` |
+
+> 上游官方 pin（如 pxdesign 侧旧 torch / 旧 Python）与上表冲突时，**以上表为目标**；收敛方案由下一阶段落地，不得把旧 pin 写成永久架构。
 
 ## Submodule
 
@@ -8,23 +20,22 @@
 git submodule update --init --recursive
 ```
 
-- `build_srcs/protenix` → bytedance/Protenix（**禁止改内文件**）
-- `build_srcs/pxdesign` → bytedance/PXDesign（**禁止改内文件**）
+- `build_srcs/protenix` → `git@github.com:bytedance/Protenix.git`
+- `build_srcs/pxdesign` → `git@github.com:bytedance/PXDesign.git`
 
-## 双环境策略
+## 双环境策略（prefix 隔离）
 
 | 产品 | prefix | 策略 |
 |------|--------|------|
-| protenix | `prefix/protenix` | 最新 submodule，torch 2.7.1 链；产品 Python **3.11–3.12**（可到 3.13），禁 3.14 |
-| pxdesign | `prefix/pxdesign` | 钉死 Protenix `v0.5.0+pxd` + torch `2.3.1`；**不要**用最新 submodule 填此 env |
+| protenix | `prefix/protenix` | 跟最新 `build_srcs/protenix` submodule |
+| pxdesign | `prefix/pxdesign` | 独立 prefix，不与最新 submodule 工作树混装 |
 
-宿主锚点：CUDA **13** / 可有 Python 3.14 / Node 24 LTS（Node 不参与本链）。prefix 内装 cu12 torch wheel。
+目标栈仍是 CUDA 13 / Python 3.14 / Node 24 LTS；当前模板里若仍残留上游 torch 版本提示，视为**待收敛债务**，不是对硬约束的覆写。
 
 ## 服务形态
 
 - **主 unit**（`*.service`）：Go supervisor `protenixd` / `pxdesignd`，`Type=simple`，可 `systemctl status`
 - **批作业**（`*-oneshot.service`）：`Type=oneshot` + `*-run` 调上游 CLI
-- 不是伪装 HTTP；上游本身是批处理 CLI
 
 ## gen / build（双 arch）
 
@@ -43,21 +54,12 @@ bash build.sh release linux_arm64
 ## 目标机装 prefix
 
 ```bash
-bash scripts/install_prefix_protenix.sh   # 无 /dev/nvidia* 默认 SKIP，写 tmp/*.skip
+bash scripts/install_prefix_protenix.sh
 bash scripts/install_prefix_pxdesign.sh
-# 强制装：SKIP_IF_NO_GPU=0 bash scripts/install_prefix_*.sh
 ```
 
 然后解压 zip，`INSTALL_SYSTEMD=1 bash install_*.sh`。
 
-验证：
-
-```bash
-/opt/protenix_build/prefix/protenix/bin/protenix-run --help
-systemctl start protenix-oneshot.service
-systemctl status protenix.service   # simple supervisor
-```
-
 ## 发版边界
 
-只用 `build.sh`。**不要**跑 `git_tag.sh`、打 release tag、触发 `.github/workflows/release.yml`（占位三段式）。
+本阶段**不发版、不 push**（除非用户当次明确要求）。不要把 `git_tag.sh` / release workflow 当默认主路径。
