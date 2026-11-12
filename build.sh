@@ -203,10 +203,23 @@ load_export() {
   local config_file="$1"
   [[ -f "${config_file}" ]] || { echo "${TAG} missing ${config_file}; run ./gen_pre_build_config.sh all first" >&2; exit 1; }
   local export_file="tmp/build_export_${config_file##*/}.env"
+  # yaml 导出也含 PREFIX_ROOT，不能冲掉用户指定的安装根
+  local _keep_prefix_root="${PREFIX_ROOT}"
+  local _keep_protenix_prefix="${PROTENIX_PREFIX}"
+  local _keep_pxdesign_prefix="${PXDESIGN_PREFIX}"
+  local _keep_weights_reuse="${WEIGHTS_REUSE_FROM:-}"
   go run gen_pre_build_config.go -validate "${config_file}"
   go run gen_pre_build_config.go -export "${config_file}" > "${export_file}"
   # shellcheck disable=SC1090
   source "${export_file}"
+  PREFIX_ROOT="${_keep_prefix_root}"
+  PROTENIX_PREFIX="${_keep_protenix_prefix}"
+  PXDESIGN_PREFIX="${_keep_pxdesign_prefix}"
+  export PREFIX_ROOT PROTENIX_PREFIX PXDESIGN_PREFIX
+  if [[ -n "${_keep_weights_reuse}" ]]; then
+    WEIGHTS_REUSE_FROM="${_keep_weights_reuse}"
+    export WEIGHTS_REUSE_FROM
+  fi
 }
 
 pack_one_product() {
