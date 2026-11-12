@@ -36,3 +36,5 @@
 ## 验收分层
 
 脚本可跑、zip 生成、`<app>-run ... --help`、GPU 真推理（有 CIF、无 ERR/、GPU util>0）是不同层级，不可互相替代。
+
+<!-- acceptance rerun marker -->
