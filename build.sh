@@ -462,6 +462,9 @@ go_artifact_ready() {
     bi="$(unzip -p "${zip_path}" "${subdir}/BUILD_INFO.txt" 2>/dev/null || true)"
     echo "${bi}" | grep -qx "commit=${commit_hash}" || return 1
     echo "${bi}" | grep -qx "dirty=0" || return 1
+    echo "${bi}" | grep -q '^src_sha=' || return 1
+    unzip -l "${zip_path}" "${subdir}/src/SRC_SHA" >/dev/null 2>&1 || return 1
+    unzip -l "${zip_path}" "${subdir}/src/${product}/setup.py" >/dev/null 2>&1 || return 1
   done
   return 0
 }
@@ -549,8 +552,13 @@ build_protenix() {
     echo "${TAG} skip protenix prefix (venv+CLI+weights ready at ${PROTENIX_PREFIX})"
     return 0
   fi
+  local src="${project_path}/build_srcs/protenix"
+  [[ -d "${src}" ]] || { echo "${TAG} missing ${src}; run git submodule update --init --recursive" >&2; exit 1; }
   echo "${TAG} install ${PROTENIX_PREFIX}"
-  bash "${project_path}/scripts/install_prefix_protenix.sh"
+  PROTENIX_SRC="${src}" \
+    SRC_SHA="$(git -C "${src}" rev-parse HEAD)" \
+    PROTENIX_OVERRIDES="${project_path}/constraints/py314-cu130.txt" \
+    bash "${project_path}/scripts/install_prefix_protenix.sh"
   protenix_prefix_ready || { echo "${TAG} FAIL: protenix prefix not ready after install" >&2; exit 1; }
 }
 
@@ -575,8 +583,13 @@ build_pxdesign() {
     echo "${TAG} skip pxdesign prefix (independent venv+CLI+weights ready at ${PXDESIGN_PREFIX})"
     return 0
   fi
+  local src="${project_path}/build_srcs/pxdesign"
+  [[ -d "${src}" ]] || { echo "${TAG} missing ${src}; run git submodule update --init --recursive" >&2; exit 1; }
   echo "${TAG} install ${PXDESIGN_PREFIX} (independent venv; not merged with protenix)"
-  bash "${project_path}/scripts/install_prefix_pxdesign.sh"
+  PXDESIGN_SRC="${src}" \
+    SRC_SHA="$(git -C "${src}" rev-parse HEAD)" \
+    PXDESIGN_OVERRIDES="${project_path}/constraints/pxdesign-py314-cu130.txt" \
+    bash "${project_path}/scripts/install_prefix_pxdesign.sh"
   pxdesign_prefix_ready || { echo "${TAG} FAIL: pxdesign prefix not ready after install" >&2; exit 1; }
 }
 

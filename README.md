@@ -64,8 +64,8 @@ export LAYERNORM_TYPE=torch
 export SUPERVISOR_PREFIX="$PREFIX_ROOT/protenix"
 
 mkdir -p "$PREFIX_ROOT/protenix/jobs/demo"
-# 输入：发布包 examples_ref/input.json，或仓库 build_srcs/protenix/examples/input.json
-cp /path/to/input.json "$PREFIX_ROOT/protenix/jobs/demo/input.json"
+# 输入：发布包内 examples_ref/input.json
+cp examples_ref/input.json "$PREFIX_ROOT/protenix/jobs/demo/input.json"
 
 "$PREFIX_ROOT/protenix/bin/protenixd" pred \
   -i "$PREFIX_ROOT/protenix/jobs/demo/input.json" \
@@ -87,8 +87,8 @@ export PROTENIX_DATA_ROOT_DIR="$PREFIX_ROOT/pxdesign/protenix_data"
 
 JOB="$PREFIX_ROOT/pxdesign/jobs/demo"
 mkdir -p "$JOB"
-# 输入：发布包 examples_ref/（含 PDL1_quick_start.yaml 与 5o45.cif）
-cp -a /path/to/examples_ref "$JOB/examples"
+# 输入：发布包内 examples_ref/（含 PDL1_quick_start.yaml 与 5o45.cif）
+cp -a examples_ref "$JOB/examples"
 
 ( cd "$JOB" && pxdesign pipeline --preset preview \
   -i ./examples/PDL1_quick_start.yaml \
