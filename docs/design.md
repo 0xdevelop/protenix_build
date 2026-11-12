@@ -19,17 +19,20 @@
 - `prefix/protenix` 与 `prefix/pxdesign` 两套独立 venv，禁止合并
 - pxdesign 链依赖官方钉死的 Protenix@v0.5.0+pxd（与 protenix prefix 的「最新 submodule」不是同一套）
 
-## 发布包
+## 交付物
 
-- `./build.sh go` 产出 zip：Go supervisor、unit/env、**git archive 的上游快照**（`src/<product>/` + `src/SRC_SHA`）、对应 `deps/`、`patches/`、安装脚本与 `weights_reuse.sh`
+两个产物都是**命令行工具**（非常驻服务）。队列、并发、对外接口留给后续阶段。
+
+- `./build.sh pack` 产出 zip：安装脚本（`install_<app>.sh` + `scripts/install_common.sh` + `install_prefix_*`）、命令入口 `bin/<app>-run`、配置模板 `conf/<app>.env`、**git archive 的上游快照**（`src/<product>/` + `src/SRC_SHA`）、`deps/`、`patches/`、`weights_reuse.sh`、`examples/`、`README.md`、`BUILD_INFO.txt`
 - 包内安装只读包内路径；联网仅用于 pip 与权重
-- 仓库内 `./build.sh protenix|pxdesign` 仍通过 `scripts/repo_src_defaults.sh` 指向 submodule（该文件不打进 zip）
+- 仓库内 `./build.sh protenix|pxdesign` 通过 `scripts/repo_src_defaults.sh` 指向 submodule（该文件不打进 zip）
 
-## systemd
+## 安装布局（`install_<app>.sh`）
 
-- 冒烟 / 批作业均为 `Type=oneshot`；CLI 缺失或预检失败必须非零退出，禁止空转常驻
-- 本仓构建流程不向 `/etc/systemd/system` 安装 unit
+- 安装目录默认 `~/.local/share/<app>`（`<APP>_PREFIX` 覆盖），不需要 sudo
+- `releases/<版本>/` 每版一套 venv；`current` / `previous` 符号链接，`update` 先构建新版本、校验通过再原子切换，失败不动旧版本；`rollback` 切回 `previous`
+- `conf/`（配置）、`data/`（权重）在 `update` 时保留；`uninstall` 默认保留、`--purge` 才删
 
 ## 验收分层
 
-脚本可跑、zip 生成、`--help`、systemd 拉起真实工作、GPU 真推理（有 CIF、无 ERR/、GPU util>0）是不同层级，不可互相替代。
+脚本可跑、zip 生成、`<app>-run ... --help`、GPU 真推理（有 CIF、无 ERR/、GPU util>0）是不同层级，不可互相替代。
