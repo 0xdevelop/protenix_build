@@ -337,13 +337,11 @@ EOF
   chmod a+x "${out_dir}/scripts/weights_reuse.sh"
   # 不打包 scripts/repo_src_defaults.sh：包内只走 src/ 快照
 
+  # 完整 examples（含 PXDesign msa/*.a3m）；与 src/<product>/examples 同源
   if [[ -d "${src}/examples" ]]; then
+    rm -rf "${out_dir}/examples_ref"
     mkdir -p "${out_dir}/examples_ref"
-    find "${src}/examples" -maxdepth 2 \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' -o -name '*.cif' \) -type f 2>/dev/null | head -40 | while read -r f; do
-      rel="${f#${src}/examples/}"
-      mkdir -p "${out_dir}/examples_ref/$(dirname "${rel}")"
-      cp -f "${f}" "${out_dir}/examples_ref/${rel}"
-    done || true
+    cp -a "${src}/examples/." "${out_dir}/examples_ref/"
   fi
 
   local install_prefix_env
@@ -413,14 +411,15 @@ ${install_prefix_env}=\$PREFIX_ROOT/pxdesign bash install_pxdesign.sh
 export PATH="\$PREFIX_ROOT/pxdesign/venv/bin:\$PATH" LAYERNORM_TYPE=torch
 export TOOL_WEIGHTS_ROOT="\$PREFIX_ROOT/pxdesign/tool_weights"
 export PROTENIX_DATA_ROOT_DIR="\$PREFIX_ROOT/pxdesign/protenix_data"
-mkdir -p /tmp/pxd_job && cp -a examples_ref /tmp/pxd_job/examples
-( cd /tmp/pxd_job && pxdesign pipeline --preset preview \\
+JOB=\$PREFIX_ROOT/pxdesign/jobs/demo
+mkdir -p "\$JOB" && cp -a examples_ref "\$JOB/examples"
+( cd "\$JOB" && pxdesign pipeline --preset preview \\
   -i ./examples/PDL1_quick_start.yaml -o ./out \\
   --N_sample 2 --num_workers 0 --use_fast_ln False \\
   --load_checkpoint_dir "\$PREFIX_ROOT/pxdesign/release_data/checkpoint" )
 \`\`\`
 
-验收：rc=0、输出有 \`.cif\`、无 \`ERR/\`、GPU 利用率 > 0。
+验收：rc=0、输出有 \`.cif\`、无 \`ERR/\`、GPU 利用率 > 0。\`examples_ref/\` 含 yaml、cif 与 \`msa/\`。
 
 ## systemd
 

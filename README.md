@@ -87,7 +87,7 @@ export PROTENIX_DATA_ROOT_DIR="$PREFIX_ROOT/pxdesign/protenix_data"
 
 JOB="$PREFIX_ROOT/pxdesign/jobs/demo"
 mkdir -p "$JOB"
-# 输入：发布包内 examples_ref/（含 PDL1_quick_start.yaml 与 5o45.cif）
+# 输入：发布包内 examples_ref/（含 yaml、cif、msa/）
 cp -a examples_ref "$JOB/examples"
 
 ( cd "$JOB" && pxdesign pipeline --preset preview \
