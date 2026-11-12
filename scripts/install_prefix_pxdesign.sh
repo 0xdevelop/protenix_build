@@ -10,12 +10,19 @@
 #
 # 用法：
 #   bash scripts/install_prefix_pxdesign.sh
-# 可选环境变量：PXDESIGN_PREFIX、PXDESIGN_SRC、PINNED_PROTENIX_REF(默认 v0.5.0+pxd)、
-#   PXDBENCH_REF(默认 v0.1.2)、COLABDESIGN_REF(默认 main)、UV、CUDA_HOME、TORCH_INDEX_URL、PYPI_INDEX_URL
+# 可选环境变量：PREFIX_ROOT、PXDESIGN_PREFIX、PXDESIGN_SRC、PINNED_PROTENIX_REF(默认 v0.5.0+pxd)、
+#   PXDBENCH_REF(默认 v0.1.2)、COLABDESIGN_REF(默认 main)、UV、CUDA_HOME、TORCH_INDEX_URL、PYPI_INDEX_URL、
+#   WEIGHTS_REUSE_FROM（已校验 prefix 根，含 pxdesign/{release_data,tool_weights,protenix_data}）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PREFIX="${PXDESIGN_PREFIX:-${ROOT}/prefix/pxdesign}"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/weights_reuse.sh"
+if [[ -n "${PREFIX_ROOT:-}" ]]; then
+  PREFIX="${PXDESIGN_PREFIX:-${PREFIX_ROOT}/pxdesign}"
+else
+  PREFIX="${PXDESIGN_PREFIX:-${ROOT}/prefix/pxdesign}"
+fi
 SRC="${PXDESIGN_SRC:-${ROOT}/build_srcs/pxdesign}"
 PINNED_PROTENIX_REF="${PINNED_PROTENIX_REF:-v0.5.0+pxd}"
 PXDBENCH_REF="${PXDBENCH_REF:-v0.1.2}"
@@ -138,4 +145,22 @@ cat "${LOG_DIR}/install_verify_import.log"
 [[ -x "${VENV}/bin/pxdesign" ]] || die "pxdesign console_script missing"
 run_step verify_cli "${VENV}/bin/pxdesign" pipeline --help
 "${UV_BIN}" pip freeze --python "${VENV}/bin/python" > "${PREFIX}/conf/pip-freeze.txt"
+
+# 6) 权重：优先 WEIGHTS_REUSE_FROM 硬链接/拷贝并校 size（拷贝再校 sha256）
+if [[ -n "${WEIGHTS_REUSE_FROM:-}" ]]; then
+  REUSE_P="${WEIGHTS_REUSE_FROM}/pxdesign"
+  [[ -d "${REUSE_P}" ]] || die "WEIGHTS_REUSE_FROM pxdesign missing: ${REUSE_P}"
+  echo "${TAG} reuse weights from ${REUSE_P}"
+  for tree in release_data/checkpoint tool_weights protenix_data; do
+    [[ -d "${REUSE_P}/${tree}" ]] || die "reuse tree missing: ${REUSE_P}/${tree}"
+    seed_tree_verified "${REUSE_P}/${tree}" "${PREFIX}/${tree}"
+  done
+fi
+[[ -s "${PREFIX}/release_data/checkpoint/pxdesign_v0.1.0.pt" ]] \
+  || die "missing ${PREFIX}/release_data/checkpoint/pxdesign_v0.1.0.pt（设 WEIGHTS_REUSE_FROM 或自行放入权重）"
+[[ -s "${PREFIX}/tool_weights/af2/params_model_1.npz" ]] \
+  || die "missing ${PREFIX}/tool_weights/af2/params_model_1.npz"
+[[ -s "${PREFIX}/protenix_data/components.v20240608.cif" ]] \
+  || die "missing ${PREFIX}/protenix_data/components.v20240608.cif"
+
 echo "${TAG} status=ok src_sha=${SRC_SHA}"

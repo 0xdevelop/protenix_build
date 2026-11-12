@@ -5,12 +5,23 @@
 #   ./build.sh [all|protenix|pxdesign|go] [release|test|debug] [linux_amd64|linux_arm64|both|*.yaml]
 # 默认 TARGET=all：Go 双 arch 打包 + prefix/protenix + prefix/pxdesign（两套独立 venv）。
 # 幂等：已就绪步骤跳过（FORCE_*=1 强制重做）。
+# PREFIX_ROOT：把双 prefix 装到 <PREFIX_ROOT>/{protenix,pxdesign}（默认 <repo>/prefix）。
+# WEIGHTS_REUSE_FROM：从已校验 prefix 根硬链接/拷贝权重（见 scripts/weights_reuse.sh）。
 set -euo pipefail
 
 project_path=$(cd "$(dirname "$0")" && pwd)
 cd "${project_path}"
 
 TAG="[build]"
+CANONICAL_PREFIX_ROOT="${project_path}/prefix"
+PREFIX_ROOT="${PREFIX_ROOT:-${CANONICAL_PREFIX_ROOT}}"
+PROTENIX_PREFIX="${PROTENIX_PREFIX:-${PREFIX_ROOT}/protenix}"
+PXDESIGN_PREFIX="${PXDESIGN_PREFIX:-${PREFIX_ROOT}/pxdesign}"
+export PREFIX_ROOT PROTENIX_PREFIX PXDESIGN_PREFIX
+# WEIGHTS_REUSE_FROM 透传给 install_prefix_*.sh（可空）
+if [[ -n "${WEIGHTS_REUSE_FROM:-}" ]]; then
+  export WEIGHTS_REUSE_FROM
+fi
 
 usage() {
   cat <<'EOF'
@@ -28,10 +39,16 @@ Idempotency:
   已就绪则跳过。强制重装：FORCE_PROTENIX=1 / FORCE_PXDESIGN=1 / FORCE_GO=1
   或 RECREATE_VENV=1 传给 protenix 安装脚本。
 
+Prefix:
+  PREFIX_ROOT=<dir>     安装到 <dir>/{protenix,pxdesign}（默认 <repo>/prefix）
+  WEIGHTS_REUSE_FROM=<已校验 prefix 根>  硬链接/拷贝权重并校 size/sha256
+
 Notes:
   - 不做发布（发版走 git_tag.sh / Actions）
   - 不合并两个 prefix venv；不用 Docker / conda / Python 3.11
   - 版本号来自 gen_pre_build_config_*.yaml（由 gen_pre_build_config.sh 生成）
+  - BUILD_INFO：工作区相对 HEAD dirty 时 commit 带 -dirty 后缀，并写 dirty=1
+  - 交付 zip 前应先提交再 FORCE_GO=1 打包，使 BUILD_INFO.commit == HEAD
 EOF
 }
 
@@ -256,7 +273,9 @@ wrapper_name=${wrapname}
 supervisor_bin=${superv_bin}
 systemd_smoke=oneshot
 systemd_batch=oneshot
-commit=${commit_hash}
+commit=${commit_for_info}
+commit_head=${commit_hash}
+dirty=${commit_dirty}
 build_time=${build_time}
 note=prefix GPU/pip install is a separate build.sh target (protenix|pxdesign|all)
 EOF
@@ -304,10 +323,12 @@ EOF
 
 go_artifact_ready() {
   # 依赖已 load_export；用 stamp + bin + zip 判定是否可跳过。
+  # dirty 工作区不跳过，避免把过期/未提交改动的包当成交付物。
   local mode="$1"
   local stamp="build/${mode}/.go_ready_${GOOS_TARGET}_${GOARCH_TARGET}"
-  local expect="${PROJECT_VERSION}|${commit_hash}|${GOOS_TARGET}|${GOARCH_TARGET}"
+  local expect="${PROJECT_VERSION}|${commit_hash}|dirty=${commit_dirty}|${GOOS_TARGET}|${GOARCH_TARGET}"
   [[ "${FORCE_GO:-0}" == "1" ]] && return 1
+  [[ "${commit_dirty}" == "1" ]] && return 1
   [[ -f "${stamp}" ]] || return 1
   [[ "$(cat "${stamp}")" == "${expect}" ]] || return 1
   for product in ${PRODUCT_NAMES}; do
@@ -320,6 +341,11 @@ go_artifact_ready() {
     [[ -x "build/${mode}/${subdir}/bin/${superv_bin}" ]] || return 1
     local zip_path="${UPLOAD_TMP_DIR}/${product}_${GOOS_TARGET}_${GOARCH_TARGET}_${mode}_${PROJECT_VERSION}.zip"
     [[ -s "${zip_path}" ]] || return 1
+    # zip 内 BUILD_INFO 必须等于当前 HEAD 且 dirty=0
+    local bi
+    bi="$(unzip -p "${zip_path}" "${subdir}/BUILD_INFO.txt" 2>/dev/null || true)"
+    echo "${bi}" | grep -qx "commit=${commit_hash}" || return 1
+    echo "${bi}" | grep -qx "dirty=0" || return 1
   done
   return 0
 }
@@ -332,28 +358,40 @@ build_go_one() {
   mkdir -p "${BUILD_MODE_ROOT}" "${UPLOAD_TMP_DIR}"
 
   if go_artifact_ready "${RUN_MODE}"; then
-    echo "${TAG} skip go ${GOOS_TARGET}/${GOARCH_TARGET} (ready: ${PROJECT_VERSION} @ ${commit_hash:0:12})"
+    echo "${TAG} skip go ${GOOS_TARGET}/${GOARCH_TARGET} (ready: ${PROJECT_VERSION} @ ${commit_hash:0:12} dirty=0)"
     return 0
   fi
 
   echo "${TAG} project=${PROJECT_NAME} version=${PROJECT_VERSION} mode=${RUN_MODE} target=${GOOS_TARGET}/${GOARCH_TARGET}"
-  echo "${TAG} commit=${commit_hash} commit_date=${commit_date} build_time=${build_time}"
+  echo "${TAG} commit=${commit_for_info} commit_date=${commit_date} build_time=${build_time}"
 
   for product in ${PRODUCT_NAMES}; do
     pack_one_product "${product}"
   done
 
   local stamp="build/${RUN_MODE}/.go_ready_${GOOS_TARGET}_${GOARCH_TARGET}"
-  echo "${PROJECT_VERSION}|${commit_hash}|${GOOS_TARGET}|${GOARCH_TARGET}" > "${stamp}"
+  if [[ "${commit_dirty}" == "0" ]]; then
+    echo "${PROJECT_VERSION}|${commit_hash}|dirty=0|${GOOS_TARGET}|${GOARCH_TARGET}" > "${stamp}"
+  else
+    rm -f "${stamp}"
+    echo "${TAG} WARN: working tree dirty → BUILD_INFO.commit=${commit_for_info}；交付前请先 commit 再 FORCE_GO=1 重打包" >&2
+  fi
   echo "${TAG} go done ${GOOS_TARGET}/${GOARCH_TARGET}"
 }
 
 build_go() {
   ensure_zip
   [[ ${#GO_CONFIGS[@]} -gt 0 ]] || GO_CONFIGS=("gen_pre_build_config_linux_amd64.yaml" "gen_pre_build_config_linux_arm64.yaml")
-  commit_hash="$(git show -s --format=%H 2>/dev/null || echo unknown)"
+  commit_hash="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
   commit_date="$(git show -s --format='%ci' 2>/dev/null || date -u '+%Y-%m-%d %H:%M:%S %z')"
   build_time="$(date +'%Y-%m-%d_%H:%M:%S')"
+  if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+    commit_dirty=1
+    commit_for_info="${commit_hash}-dirty"
+  else
+    commit_dirty=0
+    commit_for_info="${commit_hash}"
+  fi
   for cfg in "${GO_CONFIGS[@]}"; do
     build_go_one "${cfg}"
   done
@@ -362,7 +400,7 @@ build_go() {
 }
 
 protenix_prefix_ready() {
-  local p="${project_path}/prefix/protenix"
+  local p="${PROTENIX_PREFIX}"
   local venv="${p}/venv"
   [[ "${FORCE_PROTENIX:-0}" == "1" ]] && return 1
   [[ "${RECREATE_VENV:-0}" == "1" ]] && return 1
@@ -390,17 +428,18 @@ protenix_prefix_ready() {
 }
 
 build_protenix() {
+  echo "${TAG} PREFIX_ROOT=${PREFIX_ROOT} PROTENIX_PREFIX=${PROTENIX_PREFIX}"
   if protenix_prefix_ready; then
-    echo "${TAG} skip protenix prefix (venv+CLI+weights ready)"
+    echo "${TAG} skip protenix prefix (venv+CLI+weights ready at ${PROTENIX_PREFIX})"
     return 0
   fi
-  echo "${TAG} install prefix/protenix"
+  echo "${TAG} install ${PROTENIX_PREFIX}"
   bash "${project_path}/scripts/install_prefix_protenix.sh"
   protenix_prefix_ready || { echo "${TAG} FAIL: protenix prefix not ready after install" >&2; exit 1; }
 }
 
 pxdesign_prefix_ready() {
-  local p="${project_path}/prefix/pxdesign"
+  local p="${PXDESIGN_PREFIX}"
   local venv="${p}/venv"
   [[ "${FORCE_PXDESIGN:-0}" == "1" ]] && return 1
   [[ -x "${venv}/bin/pxdesign" ]] || return 1
@@ -409,20 +448,23 @@ pxdesign_prefix_ready() {
   pyv="$("${venv}/bin/python" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])')"
   [[ "${pyv}" == 3.14.* ]] || return 1
   [[ -f "${p}/conf/pip-freeze.txt" ]] || return 1
+  [[ -s "${p}/release_data/checkpoint/pxdesign_v0.1.0.pt" ]] || return 1
+  [[ -s "${p}/tool_weights/af2/params_model_1.npz" ]] || return 1
   return 0
 }
 
 build_pxdesign() {
+  echo "${TAG} PREFIX_ROOT=${PREFIX_ROOT} PXDESIGN_PREFIX=${PXDESIGN_PREFIX}"
   if pxdesign_prefix_ready; then
-    echo "${TAG} skip pxdesign prefix (independent venv+CLI ready)"
+    echo "${TAG} skip pxdesign prefix (independent venv+CLI+weights ready at ${PXDESIGN_PREFIX})"
     return 0
   fi
-  echo "${TAG} install prefix/pxdesign (independent venv; not merged with protenix)"
+  echo "${TAG} install ${PXDESIGN_PREFIX} (independent venv; not merged with protenix)"
   bash "${project_path}/scripts/install_prefix_pxdesign.sh"
   pxdesign_prefix_ready || { echo "${TAG} FAIL: pxdesign prefix not ready after install" >&2; exit 1; }
 }
 
-echo "${TAG} target=${TARGET} mode=${RUN_MODE_ARG}"
+echo "${TAG} target=${TARGET} mode=${RUN_MODE_ARG} PREFIX_ROOT=${PREFIX_ROOT}"
 case "${TARGET}" in
   go)
     build_go

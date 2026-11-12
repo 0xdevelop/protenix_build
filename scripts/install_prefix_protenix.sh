@@ -11,7 +11,8 @@
 # 用法：
 #   bash scripts/install_prefix_protenix.sh
 # 可选环境变量：
-#   PROTENIX_PREFIX   默认 <repo>/prefix/protenix
+#   PREFIX_ROOT       若设，默认 prefix 为 <PREFIX_ROOT>/protenix（仍可被 PROTENIX_PREFIX 覆盖）
+#   PROTENIX_PREFIX   默认 <PREFIX_ROOT|/repo/prefix>/protenix
 #   PROTENIX_SRC      默认 <repo>/build_srcs/protenix（必须是 git 工作树）
 #   PROTENIX_PYTHON   默认 3.14（传给 uv venv --python）
 #   UV                默认 PATH 中的 uv，其次 ~/.local/bin/uv
@@ -24,6 +25,7 @@
 #                     脚本只会下载非 v2 的公开权重；PROTENIX_MODEL=protenix-v2 且本地没有
 #                     $PROTENIX_ROOT_DIR/checkpoint/protenix-v2.pt 时直接失败（v2 需授权权重，官方地址 403，不尝试下载）。
 #   SKIP_WEIGHTS=1    不预取权重/CCD 缓存（推理时上游会自行下载）
+#   WEIGHTS_REUSE_FROM  已校验 prefix 根（含 protenix/data）；硬链接/拷贝并校 size（拷贝再校 sha256）
 #
 # 关于 fast_layernorm（上游自定义 CUDA 内核，import 时 JIT 编译）：
 #   在 torch 2.14 + CUDA 13 上编译失败，已核实原因：上游 torch_ext_compile.py 固定传 -std=c++17，
@@ -33,7 +35,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PREFIX="${PROTENIX_PREFIX:-${ROOT}/prefix/protenix}"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/weights_reuse.sh"
+if [[ -n "${PREFIX_ROOT:-}" ]]; then
+  PREFIX="${PROTENIX_PREFIX:-${PREFIX_ROOT}/protenix}"
+else
+  PREFIX="${PROTENIX_PREFIX:-${ROOT}/prefix/protenix}"
+fi
 SRC="${PROTENIX_SRC:-${ROOT}/build_srcs/protenix}"
 PY_REQ="${PROTENIX_PYTHON:-3.14}"
 OVERRIDES="${PROTENIX_OVERRIDES:-${ROOT}/constraints/py314-cu130.txt}"
@@ -180,7 +188,7 @@ run_step verify_cli "${VENV}/bin/protenix" --help
 "${UV_BIN}" pip freeze --python "${VENV}/bin/python" > "${PREFIX}/conf/pip-freeze.txt"
 echo "${TAG} freeze -> ${PREFIX}/conf/pip-freeze.txt"
 
-# 7) 权重与 CCD 缓存预取（URL 取自上游 protenix.web_service.dependency_url，不在本仓硬编码）
+# 7) 权重与 CCD 缓存：优先 WEIGHTS_REUSE_FROM 硬链接/拷贝校验，缺的再下载
 fetch_one() {  # fetch_one <URL 表的键> <目标文件>
   local key="$1" dst="$2" url
   [[ -s "${dst}" ]] && { echo "${TAG} have ${dst}"; return 0; }
@@ -191,6 +199,12 @@ fetch_one() {  # fetch_one <URL 表的键> <目标文件>
   curl -fL --retry 3 -o "${dst}.part" "${url}" || { rm -f "${dst}.part"; die "download failed: ${key} ${url}"; }
   mv "${dst}.part" "${dst}"
 }
+if [[ -n "${WEIGHTS_REUSE_FROM:-}" ]]; then
+  REUSE_DATA="${WEIGHTS_REUSE_FROM}/protenix/data"
+  [[ -d "${REUSE_DATA}" ]] || die "WEIGHTS_REUSE_FROM protenix data missing: ${REUSE_DATA}"
+  echo "${TAG} reuse weights from ${REUSE_DATA}"
+  seed_tree_verified "${REUSE_DATA}" "${DATA_ROOT}"
+fi
 if [[ "${PROTENIX_MODEL}" == protenix-v2* ]]; then
   [[ -s "${CKPT}" ]] || die "PROTENIX_MODEL=${PROTENIX_MODEL} 需要授权权重，本地缺少 ${CKPT}（官方地址 403，脚本不下载；请放入授权权重后重试，或改回 v1）"
   echo "${TAG} using licensed local weights ${CKPT}"

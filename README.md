@@ -50,13 +50,17 @@ chmod a+x gen_pre_build_config.sh build.sh
 ./build.sh go                   # 只打包 Go
 ./build.sh protenix             # 只装 prefix/protenix
 ./build.sh pxdesign             # 只装 prefix/pxdesign（独立 venv）
+# 装到另一处（不碰默认 prefix）：
+PREFIX_ROOT=/path/to/fresh WEIGHTS_REUSE_FROM="$PWD/prefix" ./build.sh all
 ```
 
 产物：
 - `build/upload_tmp_dir/{protenix,pxdesign}_linux_{amd64|arm64}_release_v*.zip`
-- `prefix/protenix`、`prefix/pxdesign`（两套独立 venv，不合并）
+- `prefix/protenix`、`prefix/pxdesign`（两套独立 venv，不合并）；可用 `PREFIX_ROOT` 改路径
 
 已就绪步骤会跳过；强制重做：`FORCE_GO=1` / `FORCE_PROTENIX=1` / `FORCE_PXDESIGN=1`。
+`BUILD_INFO`：工作区 dirty 时写 `commit=<HEAD>-dirty` / `dirty=1`；交付前先 commit 再 `FORCE_GO=1 ./build.sh go`，使 `commit` 等于 HEAD。
+冒烟：`bash scripts/smoke_protenix.sh` / `bash scripts/smoke_pxdesign.sh`（可设 `PREFIX_ROOT`）。
 验收记录：`docs/acceptance_build_sh.md`。
 
 目标机也可直接：`bash scripts/install_prefix_protenix.sh` / `bash scripts/install_prefix_pxdesign.sh`，再解压 zip 后 `INSTALL_SYSTEMD=1 bash install_*.sh`（需显式授权）。
