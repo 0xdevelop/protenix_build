@@ -2,7 +2,7 @@
 # 用法：./gen_pre_build_config.sh <linux_amd64|linux_arm64|all>
 # 固化产物：gen_pre_build_config_<os>_<arch>.yaml
 #
-# 主交付：zip + systemd 可观测进程（非 Docker）。
+# 交付：zip 发布包，解压后 install_<app>.sh 安装为命令行工具（非 Docker）。
 # 编排：仅 Go + shell；上游 Python 只在 submodule/prefix 环境内跑。
 #
 # 双环境策略（不可合并）：
@@ -11,8 +11,6 @@
 #   （不要用最新 submodule 填 pxdesign env）
 #
 # 目标运行栈（用户硬约束）：CUDA 13 / Python 3.14 / Node 24 LTS。
-# systemd：全部 Type=oneshot。<name>.service = Go 预检冒烟（环境缺失即 failed）；<name>-oneshot.service = 真实批作业。
-# 上游没有常驻服务入口，不交付 Type=simple 常驻单元。
 # 上游官方旧 pin（torch 版本等）与目标栈冲突时记为待收敛债务，不得覆写硬约束。
 
 project:
@@ -25,7 +23,6 @@ target:
   goos: "{{GOOS}}"
   goarch: "{{GOARCH}}"
 
-install_prefix: /opt/protenix_build
 
 # 字段名沿用 host_capability；语义=目标运行栈（非「仅宿主锚点、产品降级」）
 host_capability:
@@ -38,7 +35,7 @@ host_capability:
   torch_cuda_in_prefix: "cu130"
   note: >
     目标运行栈：CUDA 13 / Python 3.14 / Node 24 LTS。
-    交付：原生安装 + systemd；不以 Docker 为主路径。
+    交付：zip 发布包，原生安装为命令行工具；不用 Docker。
     上游官方 install/torch pin 若尚未对齐 Python 3.14 或 CUDA 13，下一阶段收敛，不在此改写目标。
 
 env_strategy: separate_prefix_envs
@@ -50,8 +47,6 @@ products:
   - name: protenix
     src_path: build_srcs/protenix
     build_subdir: protenix
-    service_unit: example_files/protenix.service
-    oneshot_unit: example_files/protenix-oneshot.service
     env_file: example_files/protenix.env
     wrapper: example_files/protenix-run
     install_script: example_files/install_protenix.sh
@@ -60,16 +55,11 @@ products:
     torch_hint: "2.14.1+cu130"
     cli_name: protenix
     wrapper_name: protenix-run
-    supervisor_bin: protenixd
-    supervisor_cmd_path: cmd/protenixd
-    systemd_type: oneshot
     product_python: "3.14"
 
   - name: pxdesign
     src_path: build_srcs/pxdesign
     build_subdir: pxdesign
-    service_unit: example_files/pxdesign.service
-    oneshot_unit: example_files/pxdesign-oneshot.service
     env_file: example_files/pxdesign.env
     wrapper: example_files/pxdesign-run
     install_script: example_files/install_pxdesign.sh
@@ -79,9 +69,6 @@ products:
     torch_hint: "2.14.1+cu130"
     cli_name: pxdesign
     wrapper_name: pxdesign-run
-    supervisor_bin: pxdesignd
-    supervisor_cmd_path: cmd/pxdesignd
-    systemd_type: oneshot
     product_python: "3.14"
 
 paths:
@@ -91,7 +78,7 @@ paths:
   example_files_dir: example_files
   scripts_dir: scripts
 
-# Go 打包步骤内不跑 GPU/pip；prefix 由 ./build.sh protenix|pxdesign|all 单独编排（幂等）。
+# 打包步骤内不跑 GPU/pip；仓库内 prefix 由 ./build.sh protenix|pxdesign|all 单独编排（幂等）。
 skip_prefix_install_in_build: true
-delivery: zip_and_systemd
-delivery_note: 主交付为 zip + systemd；不以 Docker 为主路径。
+delivery: zip
+delivery_note: 交付为 zip 发布包（命令行工具 + 安装脚本）；不用 Docker。

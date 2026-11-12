@@ -28,7 +28,6 @@ type preBuildConfig struct {
 		Goos   string `yaml:"goos"`
 		Goarch string `yaml:"goarch"`
 	} `yaml:"target"`
-	InstallPrefix  string `yaml:"install_prefix"`
 	HostCapability struct {
 		CUDA             string `yaml:"cuda"`
 		PythonHostAnchor string `yaml:"python_host_anchor"`
@@ -49,8 +48,6 @@ type productSpec struct {
 	Name                string `yaml:"name"`
 	SrcPath             string `yaml:"src_path"`
 	BuildSubdir         string `yaml:"build_subdir"`
-	ServiceUnit         string `yaml:"service_unit"`
-	OneshotUnit         string `yaml:"oneshot_unit"`
 	EnvFile             string `yaml:"env_file"`
 	Wrapper             string `yaml:"wrapper"`
 	InstallScript       string `yaml:"install_script"`
@@ -60,9 +57,6 @@ type productSpec struct {
 	TorchHint           string `yaml:"torch_hint"`
 	CLIName             string `yaml:"cli_name"`
 	WrapperName         string `yaml:"wrapper_name"`
-	SupervisorBin       string `yaml:"supervisor_bin"`
-	SupervisorCmdPath   string `yaml:"supervisor_cmd_path"`
-	SystemdType         string `yaml:"systemd_type"`
 	ProductPython       string `yaml:"product_python"`
 }
 
@@ -193,9 +187,6 @@ func validateConfig(cfg *preBuildConfig, requireConcreteTarget bool) error {
 	default:
 		return fmt.Errorf("run_mode must be release|test|debug, got %q", cfg.RunMode)
 	}
-	if cfg.InstallPrefix == "" {
-		return fmt.Errorf("install_prefix required")
-	}
 	if cfg.EnvStrategy == "" {
 		return fmt.Errorf("env_strategy required")
 	}
@@ -214,8 +205,8 @@ func validateConfig(cfg *preBuildConfig, requireConcreteTarget bool) error {
 		return fmt.Errorf("product python target must be 3.14 (hard constraint), got min=%q max=%q",
 			cfg.HostCapability.ProductPythonMin, cfg.HostCapability.ProductPythonMax)
 	}
-	if cfg.Delivery != "" && cfg.Delivery != "zip_and_systemd" {
-		return fmt.Errorf("delivery must be zip_and_systemd (no docker main path), got %q", cfg.Delivery)
+	if cfg.Delivery != "" && cfg.Delivery != "zip" {
+		return fmt.Errorf("delivery must be zip (no docker main path), got %q", cfg.Delivery)
 	}
 	if requireConcreteTarget {
 		if cfg.Target.Goos == "" || strings.Contains(cfg.Target.Goos, "{{") {
@@ -254,8 +245,6 @@ func validateConfig(cfg *preBuildConfig, requireConcreteTarget bool) error {
 		}{
 			{"src_path", p.SrcPath},
 			{"build_subdir", p.BuildSubdir},
-			{"service_unit", p.ServiceUnit},
-			{"oneshot_unit", p.OneshotUnit},
 			{"env_file", p.EnvFile},
 			{"wrapper", p.Wrapper},
 			{"install_script", p.InstallScript},
@@ -263,19 +252,11 @@ func validateConfig(cfg *preBuildConfig, requireConcreteTarget bool) error {
 			{"env_policy", p.EnvPolicy},
 			{"cli_name", p.CLIName},
 			{"wrapper_name", p.WrapperName},
-			{"supervisor_bin", p.SupervisorBin},
-			{"supervisor_cmd_path", p.SupervisorCmdPath},
-			{"systemd_type", p.SystemdType},
 			{"product_python", p.ProductPython},
 		} {
 			if field.v == "" {
 				return fmt.Errorf("products[%s].%s required", p.Name, field.k)
 			}
-		}
-		// 两个 unit 都是 Type=oneshot：service_unit = Go 预检冒烟（环境缺失即失败），oneshot_unit = 真实批作业。
-		// 上游无常驻入口，禁止交付 Type=simple 空转常驻（2026-11-11 15:50 监督纠正）。
-		if p.SystemdType != "oneshot" {
-			return fmt.Errorf("products[%s].systemd_type must be oneshot (no resident upstream workload), got %q", p.Name, p.SystemdType)
 		}
 		switch p.Name {
 		case "protenix":
@@ -308,7 +289,6 @@ func printExport(cfg *preBuildConfig) {
 	fmt.Printf("RUN_MODE='%s'\n", escape(cfg.RunMode))
 	fmt.Printf("GOOS_TARGET='%s'\n", escape(cfg.Target.Goos))
 	fmt.Printf("GOARCH_TARGET='%s'\n", escape(cfg.Target.Goarch))
-	fmt.Printf("INSTALL_PREFIX='%s'\n", escape(cfg.InstallPrefix))
 	fmt.Printf("ENV_STRATEGY='%s'\n", escape(cfg.EnvStrategy))
 	fmt.Printf("HOST_CUDA='%s'\n", escape(cfg.HostCapability.CUDA))
 	fmt.Printf("HOST_PYTHON_ANCHOR='%s'\n", escape(cfg.HostCapability.PythonHostAnchor))
@@ -330,8 +310,6 @@ func printExport(cfg *preBuildConfig) {
 		prefix := strings.ToUpper(strings.ReplaceAll(p.Name, "-", "_"))
 		fmt.Printf("PRODUCT_%s_SRC='%s'\n", prefix, escape(p.SrcPath))
 		fmt.Printf("PRODUCT_%s_BUILD_SUBDIR='%s'\n", prefix, escape(p.BuildSubdir))
-		fmt.Printf("PRODUCT_%s_SERVICE='%s'\n", prefix, escape(p.ServiceUnit))
-		fmt.Printf("PRODUCT_%s_ONESHOT='%s'\n", prefix, escape(p.OneshotUnit))
 		fmt.Printf("PRODUCT_%s_ENV='%s'\n", prefix, escape(p.EnvFile))
 		fmt.Printf("PRODUCT_%s_WRAPPER='%s'\n", prefix, escape(p.Wrapper))
 		fmt.Printf("PRODUCT_%s_INSTALL='%s'\n", prefix, escape(p.InstallScript))
@@ -339,9 +317,6 @@ func printExport(cfg *preBuildConfig) {
 		fmt.Printf("PRODUCT_%s_ENV_POLICY='%s'\n", prefix, escape(p.EnvPolicy))
 		fmt.Printf("PRODUCT_%s_CLI='%s'\n", prefix, escape(p.CLIName))
 		fmt.Printf("PRODUCT_%s_WRAPPER_NAME='%s'\n", prefix, escape(p.WrapperName))
-		fmt.Printf("PRODUCT_%s_SUPERVISOR_BIN='%s'\n", prefix, escape(p.SupervisorBin))
-		fmt.Printf("PRODUCT_%s_SUPERVISOR_CMD_PATH='%s'\n", prefix, escape(p.SupervisorCmdPath))
-		fmt.Printf("PRODUCT_%s_SYSTEMD_TYPE='%s'\n", prefix, escape(p.SystemdType))
 		fmt.Printf("PRODUCT_%s_PRODUCT_PYTHON='%s'\n", prefix, escape(p.ProductPython))
 		fmt.Printf("PRODUCT_%s_PINNED_PROTENIX_REF='%s'\n", prefix, escape(p.PinnedProtenixRef))
 		fmt.Printf("PRODUCT_%s_TORCH_HINT='%s'\n", prefix, escape(p.TorchHint))

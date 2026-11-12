@@ -2,8 +2,8 @@
 # 只构建，不 bump 版本、不打 tag、不 push、不装系统服务。
 # 用法：
 #   ./build.sh [--help]
-#   ./build.sh [all|protenix|pxdesign|go] [release|test|debug] [linux_amd64|linux_arm64|both|*.yaml]
-# 默认 TARGET=all：Go 双 arch 打包 + prefix/protenix + prefix/pxdesign（两套独立 venv）。
+#   ./build.sh [all|pack|protenix|pxdesign] [release|test|debug] [linux_amd64|linux_arm64|both|*.yaml]
+# 默认 TARGET=all：双 arch 发布包 + prefix/protenix + prefix/pxdesign（两套独立 venv）。
 # 幂等：已就绪步骤跳过（FORCE_*=1 强制重做）。
 # PREFIX_ROOT：把双 prefix 装到 <PREFIX_ROOT>/{protenix,pxdesign}（默认 <repo>/prefix）。
 # WEIGHTS_REUSE_FROM：从已校验 prefix 根硬链接/拷贝权重（见 scripts/weights_reuse.sh）。
@@ -27,16 +27,16 @@ usage() {
   cat <<'EOF'
 Usage:
   ./build.sh [--help]
-  ./build.sh [all|protenix|pxdesign|go] [release|test|debug] [linux_amd64|linux_arm64|both|*.yaml]
+  ./build.sh [all|pack|protenix|pxdesign] [release|test|debug] [linux_amd64|linux_arm64|both|*.yaml]
 
 Targets (default: all):
-  all       Go 双 arch 打包 + prefix/protenix + prefix/pxdesign
-  go        只构建/打包 Go supervisor（protenixd / pxdesignd）与 zip
+  all       双 arch 发布包 + prefix/protenix + prefix/pxdesign
+  pack      只打发布包 build/upload_tmp_dir/<app>_linux_<arch>_<mode>_<version>.zip
   protenix  只安装/校验 prefix/protenix（uv + Python 3.14 + torch cu130）
   pxdesign  只安装/校验 prefix/pxdesign（独立 venv；复用 scripts/install_prefix_pxdesign.sh）
 
 Idempotency:
-  已就绪则跳过。强制重装：FORCE_PROTENIX=1 / FORCE_PXDESIGN=1 / FORCE_GO=1
+  已就绪则跳过。强制重做：FORCE_PROTENIX=1 / FORCE_PXDESIGN=1 / FORCE_PACK=1
   或 RECREATE_VENV=1 传给 protenix 安装脚本。
 
 Prefix:
@@ -48,7 +48,7 @@ Notes:
   - 不合并两个 prefix venv；不用 Docker / conda / Python 3.11
   - 版本号来自 gen_pre_build_config_*.yaml（由 gen_pre_build_config.sh 生成）
   - BUILD_INFO：工作区相对 HEAD dirty 时 commit 带 -dirty 后缀，并写 dirty=1
-  - 交付 zip 前应先提交再 FORCE_GO=1 打包，使 BUILD_INFO.commit == HEAD
+  - 交付 zip 前应先提交再 FORCE_PACK=1 打包，使 BUILD_INFO.commit == HEAD
 EOF
 }
 
@@ -83,18 +83,18 @@ fi
 
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    all|protenix|pxdesign|go)
+    all|pack|protenix|pxdesign)
       TARGET="$1"
       shift
       ;;
     release|test|debug)
-      # 兼容旧用法：./build.sh release linux_arm64 → 等同 go
-      TARGET="go"
+      # ./build.sh release linux_arm64（release.yml 用法）→ 等同 pack
+      TARGET="pack"
       RUN_MODE_ARG="$1"
       shift
       ;;
     linux_amd64|linux_arm64|both|*.yaml|*.yml)
-      TARGET="go"
+      TARGET="pack"
       ;;
     *)
       echo "${TAG} unknown arg: $1" >&2
@@ -168,10 +168,10 @@ host_arch_selector() {
   esac
 }
 
-# 解析要打包的 gen yaml 列表（go / all 用）
+# 解析要打包的 gen yaml 列表（pack / all 用）
 GO_CONFIGS=()
 if [[ ${#ARCH_ARGS[@]} -eq 0 ]]; then
-  if [[ "${TARGET}" == "go" || "${TARGET}" == "all" ]]; then
+  if [[ "${TARGET}" == "pack" || "${TARGET}" == "all" ]]; then
     # 默认双 arch
     GO_CONFIGS=("gen_pre_build_config_linux_amd64.yaml" "gen_pre_build_config_linux_arm64.yaml")
   fi
@@ -224,284 +224,119 @@ load_export() {
 
 pack_one_product() {
   local name="$1"
-  local prefix
-  prefix="$(echo "${name}" | tr 'a-z-' 'A-Z_')"
-
-  local src_var="PRODUCT_${prefix}_SRC"
-  local sub_var="PRODUCT_${prefix}_BUILD_SUBDIR"
-  local svc_var="PRODUCT_${prefix}_SERVICE"
-  local oneshot_var="PRODUCT_${prefix}_ONESHOT"
-  local env_var="PRODUCT_${prefix}_ENV"
-  local wrap_var="PRODUCT_${prefix}_WRAPPER"
-  local inst_var="PRODUCT_${prefix}_INSTALL"
-  local pinst_var="PRODUCT_${prefix}_PREFIX_INSTALL"
-  local policy_var="PRODUCT_${prefix}_ENV_POLICY"
-  local cli_var="PRODUCT_${prefix}_CLI"
-  local wrapname_var="PRODUCT_${prefix}_WRAPPER_NAME"
-  local superv_var="PRODUCT_${prefix}_SUPERVISOR_BIN"
-  local superv_cmd_var="PRODUCT_${prefix}_SUPERVISOR_CMD_PATH"
-  local pinned_var="PRODUCT_${prefix}_PINNED_PROTENIX_REF"
-  local torch_var="PRODUCT_${prefix}_TORCH_HINT"
-
-  local src="${!src_var}"
-  local subdir="${!sub_var}"
-  local service="${!svc_var}"
-  local oneshot="${!oneshot_var}"
-  local envf="${!env_var}"
-  local wrapper="${!wrap_var}"
-  local install_sh="${!inst_var}"
-  local prefix_install="${!pinst_var}"
-  local policy="${!policy_var}"
-  local cli="${!cli_var}"
-  local wrapname="${!wrapname_var}"
-  local superv_bin="${!superv_var}"
-  local superv_cmd="${!superv_cmd_var}"
-  local pinned_ref="${!pinned_var}"
-  local torch_hint="${!torch_var}"
+  local up
+  up="$(echo "${name}" | tr 'a-z-' 'A-Z_')"
+  local src_var="PRODUCT_${up}_SRC" sub_var="PRODUCT_${up}_BUILD_SUBDIR" env_var="PRODUCT_${up}_ENV"
+  local wrap_var="PRODUCT_${up}_WRAPPER" inst_var="PRODUCT_${up}_INSTALL" pinst_var="PRODUCT_${up}_PREFIX_INSTALL"
+  local policy_var="PRODUCT_${up}_ENV_POLICY" pinned_var="PRODUCT_${up}_PINNED_PROTENIX_REF" torch_var="PRODUCT_${up}_TORCH_HINT"
+  local src="${!src_var}" subdir="${!sub_var}" envf="${!env_var}" wrapper="${!wrap_var}"
+  local install_sh="${!inst_var}" prefix_install="${!pinst_var}"
+  local policy="${!policy_var}" pinned_ref="${!pinned_var}" torch_hint="${!torch_var}"
 
   local out_dir="${BUILD_MODE_ROOT}/${subdir}"
   rm -rf "${out_dir}"
-  mkdir -p "${out_dir}/bin" "${out_dir}/conf" "${out_dir}/systemd" "${out_dir}/scripts" "${out_dir}/docs" \
-    "${out_dir}/deps" "${out_dir}/patches" "${out_dir}/src/${name}"
+  mkdir -p "${out_dir}/bin" "${out_dir}/conf" "${out_dir}/scripts" "${out_dir}/deps" "${out_dir}/patches" "${out_dir}/src/${name}"
 
-  [[ -d "${superv_cmd}" ]] || { echo "${TAG} missing supervisor cmd path ${superv_cmd}" >&2; exit 1; }
   [[ -d "${src}" ]] || { echo "${TAG} missing upstream src ${src}" >&2; exit 1; }
   git -C "${src}" rev-parse --verify HEAD >/dev/null 2>&1 \
     || { echo "${TAG} upstream src is not a git work tree: ${src}" >&2; exit 1; }
   local src_sha
   src_sha="$(git -C "${src}" rev-parse HEAD)"
-  echo "${TAG} go build ${superv_bin} for ${GOOS_TARGET}/${GOARCH_TARGET}"
-  CGO_ENABLED=0 GOOS="${GOOS_TARGET}" GOARCH="${GOARCH_TARGET}" \
-    go build -trimpath -ldflags "-s -w" -o "${out_dir}/bin/${superv_bin}" "./${superv_cmd}"
-  chmod a+x "${out_dir}/bin/${superv_bin}"
-
   echo "${TAG} bundle upstream ${name} @ ${src_sha:0:12} via git archive"
   git -C "${src}" archive --format=tar HEAD | tar -x -C "${out_dir}/src/${name}"
   printf '%s\n' "${src_sha}" > "${out_dir}/src/SRC_SHA"
   [[ -f "${out_dir}/src/${name}/setup.py" ]] || { echo "${TAG} git archive missing setup.py for ${name}" >&2; exit 1; }
 
-  case "${name}" in
-    protenix)
-      cp -f "${project_path}/deps/protenix.txt" "${out_dir}/deps/"
-      ;;
-    pxdesign)
-      cp -f "${project_path}/deps/pxdesign.txt" "${out_dir}/deps/"
-      cp -f "${project_path}/patches/pxdesign-argparse-percent.patch" "${out_dir}/patches/"
-      cp -f "${project_path}/patches/pxdbench-json-float.patch" "${out_dir}/patches/"
-      ;;
-    *)
-      echo "${TAG} unknown product for deps bundle: ${name}" >&2
-      exit 1
-      ;;
-  esac
+  cp -f "${project_path}/deps/${name}.txt" "${out_dir}/deps/"
+  if [[ "${name}" == "pxdesign" ]]; then
+    cp -f "${project_path}/patches/pxdesign-argparse-percent.patch" "${project_path}/patches/pxdbench-json-float.patch" \
+      "${out_dir}/patches/"
+  fi
 
-  cat > "${out_dir}/BUILD_INFO.txt" <<EOF
+  local readme="${project_path}/docs/package_${name}.md"
+  for f in "${envf}" "${wrapper}" "${install_sh}" "${prefix_install}" "${readme}" \
+           "${project_path}/scripts/install_common.sh" "${project_path}/scripts/weights_reuse.sh"; do
+    [[ -f "${f}" ]] || { echo "${TAG} missing ${f}" >&2; exit 1; }
+  done
+  cp -f "${install_sh}" "${out_dir}/install_${name}.sh"
+  cp -f "${wrapper}" "${out_dir}/bin/${name}-run"
+  cp -f "${envf}" "${out_dir}/conf/${name}.env"
+  cp -f "${prefix_install}" "${project_path}/scripts/install_common.sh" "${project_path}/scripts/weights_reuse.sh" \
+    "${out_dir}/scripts/"
+  cp -f "${readme}" "${out_dir}/README.md"
+  chmod a+x "${out_dir}/install_${name}.sh" "${out_dir}/bin/${name}-run" "${out_dir}/scripts/"*.sh
+  if [[ -d "${src}/examples" ]]; then
+    cp -a "${src}/examples" "${out_dir}/examples"
+  fi
+
+  cat > "${out_dir}/BUILD_INFO.txt" <<PBINFO
 product=${name}
 project=${PROJECT_NAME}
 version=${PROJECT_VERSION}
 run_mode=${RUN_MODE}
 goos=${GOOS_TARGET}
 goarch=${GOARCH_TARGET}
-install_prefix=${INSTALL_PREFIX}
-src_path=src/${name}
 src_sha=${src_sha}
 env_policy=${policy}
 pinned_protenix_ref=${pinned_ref}
 torch_hint=${torch_hint}
-cli_name=${cli}
-wrapper_name=${wrapname}
-supervisor_bin=${superv_bin}
-systemd_smoke=oneshot
-systemd_batch=oneshot
 commit=${commit_for_info}
 commit_head=${commit_hash}
 dirty=${commit_dirty}
 build_time=${build_time}
-note=self-contained zip: src/ + deps/ + patches/ + scripts/; pip/weights still need network
-EOF
-
-  for f in "${service}" "${oneshot}" "${envf}" "${wrapper}" "${install_sh}" "${prefix_install}"; do
-    [[ -f "${f}" ]] || { echo "${TAG} missing ${f}" >&2; exit 1; }
-  done
-
-  cp -f "${service}" "${out_dir}/systemd/$(basename "${service}")"
-  cp -f "${oneshot}" "${out_dir}/systemd/$(basename "${oneshot}")"
-  cp -f "${envf}" "${out_dir}/conf/$(basename "${envf}")"
-  cp -f "${wrapper}" "${out_dir}/bin/$(basename "${wrapper}")"
-  chmod a+x "${out_dir}/bin/$(basename "${wrapper}")"
-  cp -f "${install_sh}" "${out_dir}/install_${name}.sh"
-  chmod a+x "${out_dir}/install_${name}.sh"
-  cp -f "${prefix_install}" "${out_dir}/scripts/$(basename "${prefix_install}")"
-  chmod a+x "${out_dir}/scripts/$(basename "${prefix_install}")"
-  cp -f "${project_path}/scripts/weights_reuse.sh" "${out_dir}/scripts/weights_reuse.sh"
-  chmod a+x "${out_dir}/scripts/weights_reuse.sh"
-  # 不打包 scripts/repo_src_defaults.sh：包内只走 src/ 快照
-
-  # 完整 examples（含 PXDesign msa/*.a3m）；与 src/<product>/examples 同源
-  if [[ -d "${src}/examples" ]]; then
-    rm -rf "${out_dir}/examples_ref"
-    mkdir -p "${out_dir}/examples_ref"
-    cp -a "${src}/examples/." "${out_dir}/examples_ref/"
-  fi
-
-  local install_prefix_env
-  install_prefix_env="$(echo "${name}" | tr 'a-z' 'A-Z')_INSTALL_PREFIX"
-  if [[ "${name}" == "protenix" ]]; then
-    cat > "${out_dir}/docs/README_RUN.md" <<EOF
-# Protenix 使用说明
-
-## 前置
-
-- NVIDIA GB10 / 对应 arch；CUDA 13 驱动与 \`nvcc\`（默认 \`CUDA_HOME=/usr/local/cuda-13.0\`）
-- 已装 uv，可解析 Python 3.14；无需 sudo / Docker / conda
-
-## 安装
-
-\`\`\`bash
-cd /path/to/protenix   # 本 zip 解压根目录
-PREFIX_ROOT=/opt/protenix_prefix \\
-WEIGHTS_REUSE_FROM=/path/to/existing_prefix_root \\
-  bash scripts/install_prefix_protenix.sh
-${install_prefix_env}=\$PREFIX_ROOT/protenix bash install_protenix.sh
-\`\`\`
-
-公开权重可自动下载；\`PROTENIX_MODEL=protenix-v2\` 需自备授权权重。包内已含 \`src/protenix/\`（见 \`src/SRC_SHA\`）与 \`deps/\`。
-
-## 跑一次预测
-
-\`\`\`bash
-export PATH="\$PREFIX_ROOT/protenix/venv/bin:\$PATH" LAYERNORM_TYPE=torch SUPERVISOR_PREFIX="\$PREFIX_ROOT/protenix"
-"\$PREFIX_ROOT/protenix/bin/protenixd" pred \\
-  -i examples_ref/input.json -o "\$PREFIX_ROOT/protenix/jobs/out" \\
-  -n protenix_base_default_v1.0.0 --use_msa false -s 101
-\`\`\`
-
-验收：rc=0、输出有 \`.cif\`、无 \`ERR/\`、GPU 利用率 > 0。
-
-## systemd
-
-- 用户级（无 sudo）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=\$HOME/.config/systemd/user bash install_protenix.sh && systemctl --user daemon-reload\`
-- 系统级（需 root）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=/etc/systemd/system bash install_protenix.sh\`
-- 冒烟 unit：\`protenix.service\`（oneshot）；批作业：\`protenix-oneshot.service\`
-EOF
-  else
-    cat > "${out_dir}/docs/README_RUN.md" <<EOF
-# PXDesign 使用说明
-
-## 前置
-
-- NVIDIA GB10 / 对应 arch；CUDA 13 驱动与 \`nvcc\`（默认 \`CUDA_HOME=/usr/local/cuda-13.0\`）
-- 已装 uv，可解析 Python 3.14；无需 sudo / Docker / conda
-
-## 安装
-
-\`\`\`bash
-cd /path/to/pxdesign
-PREFIX_ROOT=/opt/pxdesign_prefix \\
-WEIGHTS_REUSE_FROM=/path/to/existing_prefix_root \\
-  bash scripts/install_prefix_pxdesign.sh
-${install_prefix_env}=\$PREFIX_ROOT/pxdesign bash install_pxdesign.sh
-\`\`\`
-
-包内已含 \`src/pxdesign/\`（见 \`src/SRC_SHA\`）、\`deps/\` 与 \`patches/\`。
-
-## 跑一次设计
-
-\`\`\`bash
-export PATH="\$PREFIX_ROOT/pxdesign/venv/bin:\$PATH" LAYERNORM_TYPE=torch
-export TOOL_WEIGHTS_ROOT="\$PREFIX_ROOT/pxdesign/tool_weights"
-export PROTENIX_DATA_ROOT_DIR="\$PREFIX_ROOT/pxdesign/protenix_data"
-JOB=\$PREFIX_ROOT/pxdesign/jobs/demo
-mkdir -p "\$JOB" && cp -a examples_ref "\$JOB/examples"
-( cd "\$JOB" && pxdesign pipeline --preset preview \\
-  -i ./examples/PDL1_quick_start.yaml -o ./out \\
-  --N_sample 2 --num_workers 0 --use_fast_ln False \\
-  --load_checkpoint_dir "\$PREFIX_ROOT/pxdesign/release_data/checkpoint" )
-\`\`\`
-
-验收：rc=0、输出有 \`.cif\`、无 \`ERR/\`、GPU 利用率 > 0。\`examples_ref/\` 含 yaml、cif 与 \`msa/\`。
-
-## systemd
-
-- 用户级（无 sudo）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=\$HOME/.config/systemd/user bash install_pxdesign.sh && systemctl --user daemon-reload\`
-- 系统级（需 root）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=/etc/systemd/system bash install_pxdesign.sh\`
-- 冒烟 unit：\`pxdesign.service\`（oneshot）；批作业：\`pxdesign-oneshot.service\`
-EOF
-  fi
+PBINFO
 
   local zip_name="${name}_${GOOS_TARGET}_${GOARCH_TARGET}_${RUN_MODE}_${PROJECT_VERSION}.zip"
   local zip_path="${project_path}/${UPLOAD_TMP_DIR}/${zip_name}"
   rm -f "${zip_path}"
-  ( cd "${BUILD_MODE_ROOT}" && zip -r "${zip_path}" "${subdir}" >/dev/null )
+  ( cd "${BUILD_MODE_ROOT}" && zip -qr "${zip_path}" "${subdir}" )
   echo "${TAG} packed ${UPLOAD_TMP_DIR}/${zip_name} (src_sha=${src_sha:0:12})"
 }
 
-go_artifact_ready() {
-  # 依赖已 load_export；用 stamp + bin + zip 判定是否可跳过。
-  # dirty 工作区不跳过，避免把过期/未提交改动的包当成交付物。
+pack_ready() {
   local mode="$1"
-  local stamp="build/${mode}/.go_ready_${GOOS_TARGET}_${GOARCH_TARGET}"
-  local expect="${PROJECT_VERSION}|${commit_hash}|dirty=${commit_dirty}|${GOOS_TARGET}|${GOARCH_TARGET}"
-  [[ "${FORCE_GO:-0}" == "1" ]] && return 1
+  [[ "${FORCE_PACK:-0}" == "1" ]] && return 1
   [[ "${commit_dirty}" == "1" ]] && return 1
-  [[ -f "${stamp}" ]] || return 1
-  [[ "$(cat "${stamp}")" == "${expect}" ]] || return 1
   for product in ${PRODUCT_NAMES}; do
-    local prefix sub_var superv_var
-    prefix="$(echo "${product}" | tr 'a-z-' 'A-Z_')"
-    sub_var="PRODUCT_${prefix}_BUILD_SUBDIR"
-    superv_var="PRODUCT_${prefix}_SUPERVISOR_BIN"
-    local subdir="${!sub_var}"
-    local superv_bin="${!superv_var}"
-    [[ -x "build/${mode}/${subdir}/bin/${superv_bin}" ]] || return 1
+    local up sub_var subdir bi
+    up="$(echo "${product}" | tr 'a-z-' 'A-Z_')"
+    sub_var="PRODUCT_${up}_BUILD_SUBDIR"
+    subdir="${!sub_var}"
     local zip_path="${UPLOAD_TMP_DIR}/${product}_${GOOS_TARGET}_${GOARCH_TARGET}_${mode}_${PROJECT_VERSION}.zip"
     [[ -s "${zip_path}" ]] || return 1
-    # zip 内 BUILD_INFO 必须等于当前 HEAD 且 dirty=0
-    local bi
     bi="$(unzip -p "${zip_path}" "${subdir}/BUILD_INFO.txt" 2>/dev/null || true)"
     echo "${bi}" | grep -qx "commit=${commit_hash}" || return 1
     echo "${bi}" | grep -qx "dirty=0" || return 1
-    echo "${bi}" | grep -q '^src_sha=' || return 1
-    unzip -l "${zip_path}" "${subdir}/src/SRC_SHA" >/dev/null 2>&1 || return 1
+    unzip -l "${zip_path}" "${subdir}/install_${product}.sh" >/dev/null 2>&1 || return 1
     unzip -l "${zip_path}" "${subdir}/src/${product}/setup.py" >/dev/null 2>&1 || return 1
   done
   return 0
 }
 
-build_go_one() {
+build_pack_one() {
   local config_file="$1"
   load_export "${config_file}"
   local RUN_MODE="${RUN_MODE_ARG}"
   local BUILD_MODE_ROOT="${BUILD_ROOT}/${RUN_MODE}"
   mkdir -p "${BUILD_MODE_ROOT}" "${UPLOAD_TMP_DIR}"
-
-  if go_artifact_ready "${RUN_MODE}"; then
-    echo "${TAG} skip go ${GOOS_TARGET}/${GOARCH_TARGET} (ready: ${PROJECT_VERSION} @ ${commit_hash:0:12} dirty=0)"
+  if pack_ready "${RUN_MODE}"; then
+    echo "${TAG} skip pack ${GOOS_TARGET}/${GOARCH_TARGET} (ready: ${PROJECT_VERSION} @ ${commit_hash:0:12} dirty=0)"
     return 0
   fi
-
   echo "${TAG} project=${PROJECT_NAME} version=${PROJECT_VERSION} mode=${RUN_MODE} target=${GOOS_TARGET}/${GOARCH_TARGET}"
-  echo "${TAG} commit=${commit_for_info} commit_date=${commit_date} build_time=${build_time}"
-
+  echo "${TAG} commit=${commit_for_info} build_time=${build_time}"
   for product in ${PRODUCT_NAMES}; do
     pack_one_product "${product}"
   done
-
-  local stamp="build/${RUN_MODE}/.go_ready_${GOOS_TARGET}_${GOARCH_TARGET}"
-  if [[ "${commit_dirty}" == "0" ]]; then
-    echo "${PROJECT_VERSION}|${commit_hash}|dirty=0|${GOOS_TARGET}|${GOARCH_TARGET}" > "${stamp}"
-  else
-    rm -f "${stamp}"
-    echo "${TAG} WARN: working tree dirty → BUILD_INFO.commit=${commit_for_info}；交付前请先 commit 再 FORCE_GO=1 重打包" >&2
+  if [[ "${commit_dirty}" == "1" ]]; then
+    echo "${TAG} WARN: working tree dirty -> BUILD_INFO.commit=${commit_for_info}; commit then FORCE_PACK=1" >&2
   fi
-  echo "${TAG} go done ${GOOS_TARGET}/${GOARCH_TARGET}"
 }
 
-build_go() {
+build_pack() {
   ensure_zip
   [[ ${#GO_CONFIGS[@]} -gt 0 ]] || GO_CONFIGS=("gen_pre_build_config_linux_amd64.yaml" "gen_pre_build_config_linux_arm64.yaml")
   commit_hash="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  commit_date="$(git show -s --format='%ci' 2>/dev/null || date -u '+%Y-%m-%d %H:%M:%S %z')"
   build_time="$(date +'%Y-%m-%d_%H:%M:%S')"
   if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
     commit_dirty=1
@@ -511,10 +346,9 @@ build_go() {
     commit_for_info="${commit_hash}"
   fi
   for cfg in "${GO_CONFIGS[@]}"; do
-    build_go_one "${cfg}"
+    build_pack_one "${cfg}"
   done
-  echo "${TAG} go zips:"
-  ls -la build/upload_tmp_dir/*_"${RUN_MODE_ARG}"_*.zip 2>/dev/null || ls -la build/upload_tmp_dir/*.zip
+  ls -la build/upload_tmp_dir/*_"${RUN_MODE_ARG}"_*.zip
 }
 
 protenix_prefix_ready() {
@@ -594,8 +428,8 @@ build_pxdesign() {
 
 echo "${TAG} target=${TARGET} mode=${RUN_MODE_ARG} PREFIX_ROOT=${PREFIX_ROOT}"
 case "${TARGET}" in
-  go)
-    build_go
+  pack)
+    build_pack
     ;;
   protenix)
     build_protenix
@@ -604,7 +438,7 @@ case "${TARGET}" in
     build_pxdesign
     ;;
   all)
-    build_go
+    build_pack
     build_protenix
     build_pxdesign
     ;;
