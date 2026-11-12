@@ -1,35 +1,59 @@
 #!/bin/bash
-# PXDesign CLI wrapper：激活钉死链独立 prefix 后 exec 上游 pxdesign（批任务入口）。
+# PXDesign 命令入口：加载 conf/pxdesign.env 和当前版本的 venv，再执行上游 pxdesign。
+#   pxdesign-run pipeline --preset preview -i task.yaml -o out_dir [其它参数]
+# pipeline 未给时自动补：--load_checkpoint_dir（配置里的权重目录）、--use_fast_ln False、--num_workers 0。
+# 输出目录下出现 ERR/ 时返回 3（上游此时可能仍返回 0）。
 set -euo pipefail
 
-PREFIX="${PXDESIGN_PREFIX:-/opt/protenix_build/prefix/pxdesign}"
+PREFIX="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 ENV_FILE="${PREFIX}/conf/pxdesign.env"
-VENV_ACTIVATE="${PREFIX}/venv/bin/activate"
-
 if [[ -f "${ENV_FILE}" ]]; then
   set -a
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
   set +a
 fi
+if [[ -x "${PREFIX}/current/venv/bin/pxdesign" ]]; then
+  VENV="${PREFIX}/current/venv"
+elif [[ -x "${PREFIX}/venv/bin/pxdesign" ]]; then
+  VENV="${PREFIX}/venv"
+else
+  echo "[pxdesign-run] 找不到 pxdesign，请先执行 install_pxdesign.sh install" >&2
+  exit 127
+fi
+DATA="${PXDESIGN_DATA:-${PREFIX}/data}"
+export TOOL_WEIGHTS_ROOT="${TOOL_WEIGHTS_ROOT:-${DATA}/tool_weights}"
+export PROTENIX_DATA_ROOT_DIR="${PROTENIX_DATA_ROOT_DIR:-${DATA}/protenix_data}"
+CKPT_DIR="${PXDESIGN_CHECKPOINT_DIR:-${DATA}/release_data/checkpoint}"
+export LAYERNORM_TYPE="${LAYERNORM_TYPE:-torch}"
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.0}"
+export VIRTUAL_ENV="${VENV}"
+export PATH="${VENV}/bin:${CUDA_HOME}/bin:${PATH}"
 
-export TOOL_WEIGHTS_ROOT="${TOOL_WEIGHTS_ROOT:-${PREFIX}/tool_weights}"
-export PROTENIX_DATA_ROOT_DIR="${PROTENIX_DATA_ROOT_DIR:-${PREFIX}/protenix_data}"
-if [[ -d "${PREFIX}/cutlass" ]]; then
-  export CUTLASS_PATH="${CUTLASS_PATH:-${PREFIX}/cutlass}"
+if [[ "${1:-}" != "pipeline" ]]; then
+  exec "${VENV}/bin/pxdesign" "$@"
 fi
 
-if [[ -f "${VENV_ACTIVATE}" ]]; then
-  # shellcheck disable=SC1090
-  source "${VENV_ACTIVATE}"
-fi
+args=("$@")
+out_dir=""
+has_ckpt=0 has_ln=0 has_workers=0
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[i]}" in
+    -o|--dump_dir) out_dir="${args[i+1]:-}" ;;
+    --dump_dir=*) out_dir="${args[i]#--dump_dir=}" ;;
+    --load_checkpoint_dir|--load_checkpoint_dir=*) has_ckpt=1 ;;
+    --use_fast_ln|--use_fast_ln=*) has_ln=1 ;;
+    --num_workers|--num_workers=*) has_workers=1 ;;
+  esac
+done
+[[ ${has_ckpt} -eq 1 ]] || args+=(--load_checkpoint_dir "${CKPT_DIR}")
+[[ ${has_ln} -eq 1 ]] || args+=(--use_fast_ln False)
+[[ ${has_workers} -eq 1 ]] || args+=(--num_workers 0)
 
-if [[ -x "${PREFIX}/venv/bin/pxdesign" ]]; then
-  exec "${PREFIX}/venv/bin/pxdesign" "$@"
+rc=0
+"${VENV}/bin/pxdesign" "${args[@]}" || rc=$?
+if [[ ${rc} -eq 0 && -n "${out_dir}" && -d "${out_dir}/ERR" && -n "$(ls -A "${out_dir}/ERR")" ]]; then
+  echo "[pxdesign-run] 有任务失败，见 ${out_dir}/ERR/" >&2
+  exit 3
 fi
-if command -v pxdesign >/dev/null 2>&1; then
-  exec pxdesign "$@"
-fi
-
-echo "[pxdesign-run] pxdesign CLI not found; run scripts/install_prefix_pxdesign.sh first" >&2
-exit 127
+exit "${rc}"

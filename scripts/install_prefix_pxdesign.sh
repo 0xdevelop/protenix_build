@@ -5,7 +5,10 @@
 #   2) 发布包内：包已含 src/ + deps/ + patches/，只使用包内文件（仍需联网拉 pip 依赖与权重）
 #
 # 运行时需：LAYERNORM_TYPE=torch、TOOL_WEIGHTS_ROOT、PROTENIX_DATA_ROOT_DIR，
-# 以及 pipeline 参数 --num_workers 0 --use_fast_ln False --load_checkpoint_dir <prefix>/release_data/checkpoint
+# 以及 pipeline 参数 --num_workers 0 --use_fast_ln False --load_checkpoint_dir <数据目录>/release_data/checkpoint
+#
+# PXDESIGN_DATA：权重与数据目录（默认 <prefix>）。缺失的权重从上游官方地址下载；
+# 设 WEIGHTS_REUSE_FROM=<已有 prefix 根> 时改为从 <根>/pxdesign 硬链接。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -107,7 +110,8 @@ resolve_src
 [[ -f "${SRC}/setup.py" ]] || die "PXDesign setup.py missing under ${SRC}"
 [[ -x "${CUDA_HOME}/bin/nvcc" ]] || die "nvcc not found under CUDA_HOME=${CUDA_HOME}"
 
-mkdir -p "${PREFIX}"/{release_data/checkpoint,tool_weights,protenix_data,logs,conf,bin,src}
+DATA="${PXDESIGN_DATA:-${PREFIX}}"
+mkdir -p "${PREFIX}"/{logs,conf,src} "${DATA}"/{release_data/checkpoint,tool_weights,protenix_data}
 resolve_src_sha
 echo "${TAG} prefix=${PREFIX} src=${SRC}@${SRC_SHA:0:12} protenix=${PINNED_PROTENIX_REF} pxdbench=${PXDBENCH_REF}"
 
@@ -177,20 +181,60 @@ cat "${LOG_DIR}/install_verify_import.log"
 run_step verify_cli "${VENV}/bin/pxdesign" pipeline --help
 "${UV_BIN}" pip freeze --python "${VENV}/bin/python" > "${PREFIX}/conf/pip-freeze.txt"
 
+CKPT_DIR="${DATA}/release_data/checkpoint"
+TW="${DATA}/tool_weights"
+CCD="${DATA}/protenix_data"
 if [[ -n "${WEIGHTS_REUSE_FROM:-}" ]]; then
   REUSE_P="${WEIGHTS_REUSE_FROM}/pxdesign"
   [[ -d "${REUSE_P}" ]] || die "WEIGHTS_REUSE_FROM pxdesign missing: ${REUSE_P}"
   echo "${TAG} reuse weights from ${REUSE_P}"
   for tree in release_data/checkpoint tool_weights protenix_data; do
     [[ -d "${REUSE_P}/${tree}" ]] || die "reuse tree missing: ${REUSE_P}/${tree}"
-    seed_tree_verified "${REUSE_P}/${tree}" "${PREFIX}/${tree}"
+    seed_tree_verified "${REUSE_P}/${tree}" "${DATA}/${tree}"
   done
 fi
-[[ -s "${PREFIX}/release_data/checkpoint/pxdesign_v0.1.0.pt" ]] \
-  || die "missing ${PREFIX}/release_data/checkpoint/pxdesign_v0.1.0.pt（设 WEIGHTS_REUSE_FROM 或自行放入权重）"
-[[ -s "${PREFIX}/tool_weights/af2/params_model_1.npz" ]] \
-  || die "missing ${PREFIX}/tool_weights/af2/params_model_1.npz"
-[[ -s "${PREFIX}/protenix_data/components.v20240608.cif" ]] \
-  || die "missing ${PREFIX}/protenix_data/components.v20240608.cif"
+
+# 缺什么下什么（地址同上游 pxdesign/utils/infer.py 与 download_tool_weights.sh）
+fetch() {
+  local url="$1" dst="$2"
+  [[ -s "${dst}" ]] && return 0
+  echo "${TAG} download ${url}"
+  mkdir -p "$(dirname "${dst}")"
+  curl -fL --retry 3 -o "${dst}.part" "${url}" || { rm -f "${dst}.part"; die "download failed: ${url}"; }
+  mv "${dst}.part" "${dst}"
+}
+TOS="https://pxdesign.tos-cn-beijing.volces.com"
+for m in pxdesign_v0.1.0 protenix_base_default_v0.5.0 protenix_mini_default_v0.5.0 protenix_mini_tmpl_v0.5.0; do
+  fetch "${TOS}/release_model/${m}.pt" "${CKPT_DIR}/${m}.pt"
+done
+for f in components.v20240608.cif components.v20240608.cif.rdkit_mol.pkl clusters-by-entity-40.txt; do
+  fetch "${TOS}/release_data/${f}" "${CCD}/${f}"
+done
+if [[ ! -s "${TW}/af2/params_model_1.npz" || ! -s "${TW}/af2/params_model_1_ptm.npz" ]]; then
+  # 只解出 PXDesign 必需的两个 AF2 参数文件，不落地 5GB 的 tar
+  echo "${TAG} download AlphaFold2 params (stream, extract params_model_1{,_ptm}.npz)"
+  mkdir -p "${TW}/af2.part"
+  curl -fL --retry 3 https://storage.googleapis.com/alphafold/alphafold_params_2022-12-06.tar \
+    | tar -x -C "${TW}/af2.part" params_model_1.npz params_model_1_ptm.npz LICENSE \
+    || { rm -rf "${TW}/af2.part"; die "AF2 params download failed"; }
+  mkdir -p "${TW}/af2"
+  mv -f "${TW}/af2.part"/* "${TW}/af2/"
+  rmdir "${TW}/af2.part"
+fi
+if [[ ! -d "${TW}/mpnn/vanilla_model_weights" ]]; then
+  echo "${TAG} download ProteinMPNN weights (git clone --depth 1)"
+  MPNN_TMP="$(mktemp -d)"
+  git clone -q --depth 1 https://github.com/dauparas/ProteinMPNN.git "${MPNN_TMP}" \
+    || { rm -rf "${MPNN_TMP}"; die "ProteinMPNN clone failed"; }
+  mkdir -p "${TW}/mpnn"
+  for d in ca_model_weights soluble_model_weights vanilla_model_weights; do
+    [[ -d "${TW}/mpnn/${d}" ]] || cp -r "${MPNN_TMP}/${d}" "${TW}/mpnn/${d}"
+  done
+  rm -rf "${MPNN_TMP}"
+fi
+for f in "${CKPT_DIR}/pxdesign_v0.1.0.pt" "${TW}/af2/params_model_1.npz" "${TW}/af2/params_model_1_ptm.npz" \
+         "${CCD}/components.v20240608.cif"; do
+  [[ -s "${f}" ]] || die "missing ${f}"
+done
 
 echo "${TAG} status=ok src_sha=${SRC_SHA}"

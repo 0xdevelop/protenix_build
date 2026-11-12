@@ -8,6 +8,7 @@
 #   PREFIX_ROOT / PROTENIX_PREFIX / PROTENIX_SRC / PROTENIX_OVERRIDES / PROTENIX_PYTHON
 #   UV / CUDA_HOME / TORCH_INDEX_URL / PYPI_INDEX_URL / RECREATE_VENV / LAYERNORM_TYPE
 #   PROTENIX_MODEL（默认 v1；v2 需本地授权权重）/ SKIP_WEIGHTS / WEIGHTS_REUSE_FROM
+#   PROTENIX_ENV_FILE（默认 <prefix>/conf/protenix.env；install_protenix.sh 指向安装目录的共用配置）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -113,14 +114,14 @@ resolve_src
 [[ -x "${CUDA_HOME}/bin/nvcc" ]] || die "nvcc not found under CUDA_HOME=${CUDA_HOME} (CUDA 13 toolkit required)"
 command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found (NVIDIA driver required)"
 
-mkdir -p "${PREFIX}"/{data,logs,conf,bin,scripts,src}
+mkdir -p "${PREFIX}"/{logs,conf,src}
 resolve_src_sha
 echo "${TAG} prefix=${PREFIX}"
 echo "${TAG} src=${SRC} @ ${SRC_SHA}"
 echo "${TAG} uv=${UV_BIN} ($("${UV_BIN}" --version))"
 echo "${TAG} cuda=$("${CUDA_HOME}/bin/nvcc" --version | grep -o 'release [0-9.]*')  torch_index=${TORCH_INDEX_URL} pypi_index=${PYPI_INDEX_URL}"
 
-ENV_FILE="${PREFIX}/conf/protenix.env"
+ENV_FILE="${PROTENIX_ENV_FILE:-${PREFIX}/conf/protenix.env}"
 if [[ ! -f "${ENV_FILE}" ]]; then
   if [[ -f "${ROOT}/example_files/protenix.env" ]]; then
     ENV_TMPL="${ROOT}/example_files/protenix.env"
@@ -129,7 +130,8 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   else
     die "env template missing (expected example_files/protenix.env or conf/protenix.env)"
   fi
-  sed "s|/opt/protenix_build/prefix/protenix|${PREFIX}|g" "${ENV_TMPL}" > "${ENV_FILE}"
+  mkdir -p "$(dirname "${ENV_FILE}")"
+  sed "s|@PREFIX@|${PREFIX}|g" "${ENV_TMPL}" > "${ENV_FILE}"
   echo "${TAG} wrote ${ENV_FILE}"
 fi
 if [[ -z "${PROTENIX_MODEL:-}" ]]; then
@@ -139,6 +141,7 @@ PROTENIX_MODEL="${PROTENIX_MODEL:-protenix_base_default_v1.0.0}"
 DATA_ROOT="$(sed -n 's/^PROTENIX_ROOT_DIR=//p' "${ENV_FILE}" | tail -n1 | tr -d '"')"
 DATA_ROOT="${DATA_ROOT:-${PREFIX}/data}"
 CKPT="${DATA_ROOT}/checkpoint/${PROTENIX_MODEL}.pt"
+mkdir -p "${DATA_ROOT}"
 echo "${TAG} PROTENIX_MODEL=${PROTENIX_MODEL} PROTENIX_ROOT_DIR=${DATA_ROOT}"
 
 READY_MARK="${PREFIX}/conf/install.ready"

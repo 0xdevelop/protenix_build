@@ -1,73 +1,36 @@
 #!/bin/bash
-# PXDesign quick_start 冒烟：rc=0、有 CIF、无 ERR/、GPU util>0。
-# 可选：PREFIX_ROOT / PXDESIGN_PREFIX；默认 <repo>/prefix/pxdesign。
+# PXDesign 冒烟：用安装好的 pxdesign-run 跑一次示例设计（PDL1 quick start，preview）并判定结果。
+# 用法：scripts/smoke_pxdesign.sh <pxdesign-run 路径> <作业目录> <examples 目录>
+# 通过条件：rc=0、输出有 CIF、无 ERR/、GPU 利用率峰值 > 0。
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "${ROOT}"
-
-PREFIX_ROOT="${PREFIX_ROOT:-${ROOT}/prefix}"
-P="${PXDESIGN_PREFIX:-${PREFIX_ROOT}/pxdesign}"
-JOBDIR="${P}/jobs/buildsh_smoke"
-
-[[ -x "${P}/venv/bin/pxdesign" ]] || { echo "FAIL: missing ${P}/venv/bin/pxdesign" >&2; exit 1; }
-
+RUN="$1" JOBDIR="$2" EXAMPLES="$3"
+[[ -x "${RUN}" ]] || { echo "FAIL: ${RUN} 不可执行" >&2; exit 1; }
+[[ -f "${EXAMPLES}/PDL1_quick_start.yaml" ]] || { echo "FAIL: ${EXAMPLES}/PDL1_quick_start.yaml 不存在" >&2; exit 1; }
 rm -rf "${JOBDIR}"
 mkdir -p "${JOBDIR}"
-if [[ -d "${ROOT}/build_srcs/pxdesign/examples" ]]; then
-  cp -a "${ROOT}/build_srcs/pxdesign/examples" "${JOBDIR}/examples"
-elif [[ -d "${P}/jobs/run2/examples" ]]; then
-  cp -a "${P}/jobs/run2/examples" "${JOBDIR}/examples"
-else
-  echo "FAIL: examples/ not found" >&2
-  exit 1
-fi
-[[ -f "${JOBDIR}/examples/PDL1_quick_start.yaml" ]] || { echo "FAIL: PDL1_quick_start.yaml missing" >&2; exit 1; }
-[[ -f "${JOBDIR}/examples/5o45.cif" ]] || { echo "FAIL: 5o45.cif missing" >&2; exit 1; }
+cp -a "${EXAMPLES}" "${JOBDIR}/examples"
 
-export PATH="${P}/venv/bin:/usr/local/cuda-13.0/bin:${PATH}"
-export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.0}"
-export LAYERNORM_TYPE=torch
-export TOOL_WEIGHTS_ROOT="${P}/tool_weights"
-export PROTENIX_DATA_ROOT_DIR="${P}/protenix_data"
-
-nvidia-smi --query-gpu=timestamp,utilization.gpu,power.draw --format=csv -l 2 > "${JOBDIR}/gpu.csv" &
-SMI=$!
-cleanup() { kill "${SMI}" 2>/dev/null || true; }
-trap cleanup EXIT
+( while :; do
+    printf '%s,%s,%s\n' "$(date +%s)" \
+      "$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits | head -n1)" \
+      "$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "%d",(t-a)/1024}' /proc/meminfo)"
+    sleep 2
+  done ) > "${JOBDIR}/usage.csv" &
+SAMPLER=$!
+trap 'kill ${SAMPLER} 2>/dev/null || true' EXIT
 
 t0=$(date +%s.%N)
-echo "start $(date '+%F %T %z')" > "${JOBDIR}/result.txt"
-set +e
-(
-  cd "${JOBDIR}"
-  pxdesign pipeline --preset preview \
-    -i ./examples/PDL1_quick_start.yaml \
-    -o ./out \
-    --N_sample 2 --num_workers 0 --use_fast_ln False \
-    --load_checkpoint_dir "${P}/release_data/checkpoint" \
-    > ./pipeline.log 2>&1
-)
-rc=$?
-set -e
+rc=0
+( cd "${JOBDIR}" && "${RUN}" pipeline --preset preview -i ./examples/PDL1_quick_start.yaml -o ./out --N_sample 2 ) \
+  > "${JOBDIR}/run.log" 2>&1 || rc=$?
 t1=$(date +%s.%N)
-wall=$(echo "${t1} - ${t0}" | bc)
-echo "end $(date '+%F %T %z') rc=${rc} wall=${wall}" >> "${JOBDIR}/result.txt"
-echo "prefix=${P}" >> "${JOBDIR}/result.txt"
+kill "${SAMPLER}" 2>/dev/null || true
 
-echo "=== result ==="
-cat "${JOBDIR}/result.txt"
-if [[ -d "${JOBDIR}/out/ERR" ]]; then
-  echo "=== HAS ERR ==="
-  find "${JOBDIR}/out/ERR" -type f | head -20
-  exit 1
-fi
-echo "=== NO_ERR ==="
-cif_n=$(find "${JOBDIR}/out" -name '*.cif' | wc -l)
-echo "cif_count=${cif_n}"
-[[ "${cif_n}" -gt 0 ]] || { echo "FAIL: no cif"; exit 1; }
-gpu_max=$(awk -F', ' 'NR>1{gsub(/ %/,"",$2); if($2+0>m)m=$2+0} END{print m+0}' "${JOBDIR}/gpu.csv")
-echo "gpu_max_util=${gpu_max}%"
-[[ "${gpu_max}" -gt 0 ]] || { echo "FAIL: gpu util 0"; exit 1; }
-[[ "${rc}" -eq 0 ]] || { echo "FAIL: rc=${rc}"; tail -40 "${JOBDIR}/pipeline.log"; exit "${rc}"; }
-echo "SMOKE_PXDESIGN_OK"
-exit 0
+wall=$(echo "${t1} - ${t0}" | bc)
+cif=$(find "${JOBDIR}/out" -name '*.cif' 2>/dev/null | wc -l)
+err=NO_ERR; [[ -d "${JOBDIR}/out/ERR" ]] && err=HAS_ERR
+gpu=$(awk -F, '$2+0>m{m=$2+0}END{print m+0}' "${JOBDIR}/usage.csv")
+mem=$(awk -F, '$3+0>m{m=$3+0}END{print m+0}' "${JOBDIR}/usage.csv")
+echo "job=${JOBDIR} wall=${wall} rc=${rc} cif=${cif} ${err} gpu_max=${gpu}% mem_used_max_mib=${mem}" | tee "${JOBDIR}/result.txt"
+[[ ${rc} -eq 0 && ${cif} -gt 0 && ${err} == NO_ERR && ${gpu} -gt 0 ]] || { tail -n 30 "${JOBDIR}/run.log"; exit 1; }
+echo SMOKE_PXDESIGN_OK

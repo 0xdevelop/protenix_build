@@ -1,76 +1,36 @@
 #!/bin/bash
-# Protenix 最小推理冒烟：rc=0、有 CIF、无 ERR/、GPU util>0。
-# 可选：PREFIX_ROOT / PROTENIX_PREFIX；默认 <repo>/prefix/protenix。
+# Protenix 冒烟：用安装好的 protenix-run 跑一次示例预测并判定结果。
+# 用法：scripts/smoke_protenix.sh <protenix-run 路径> <作业目录> <input.json>
+# 通过条件：rc=0、输出有 CIF、无 ERR/、GPU 利用率峰值 > 0。
+# 同时记录墙钟、GPU 利用率峰值、系统内存占用峰值（GB10 为统一内存，nvidia-smi 不报显存）。
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "${ROOT}"
-export PATH="${HOME}/.local/go/bin:${PATH}"
-
-PREFIX_ROOT="${PREFIX_ROOT:-${ROOT}/prefix}"
-P="${PROTENIX_PREFIX:-${PREFIX_ROOT}/protenix}"
-JOBDIR="${P}/jobs/buildsh_smoke"
-BIN="${PROTENIXD_BIN:-${ROOT}/build/release/protenix/bin/protenixd}"
-
-[[ -x "${BIN}" ]] || { echo "FAIL: missing ${BIN} (run ./build.sh go first)" >&2; exit 1; }
-[[ -x "${P}/venv/bin/protenix" ]] || { echo "FAIL: missing ${P}/venv/bin/protenix" >&2; exit 1; }
-
+RUN="$1" JOBDIR="$2" INPUT="$3"
+[[ -x "${RUN}" ]] || { echo "FAIL: ${RUN} 不可执行" >&2; exit 1; }
+[[ -f "${INPUT}" ]] || { echo "FAIL: ${INPUT} 不存在" >&2; exit 1; }
 rm -rf "${JOBDIR}"
 mkdir -p "${JOBDIR}"
-if [[ -f "${P}/jobs/input.json" ]]; then
-  cp -f "${P}/jobs/input.json" "${JOBDIR}/input.json"
-elif [[ -f "${ROOT}/build_srcs/protenix/examples/input.json" ]]; then
-  cp -f "${ROOT}/build_srcs/protenix/examples/input.json" "${JOBDIR}/input.json"
-else
-  echo "FAIL: input.json not found" >&2
-  exit 1
-fi
+cp -f "${INPUT}" "${JOBDIR}/input.json"
 
-if [[ -f "${P}/conf/protenix.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${P}/conf/protenix.env"
-  set +a
-fi
-export LAYERNORM_TYPE="${LAYERNORM_TYPE:-torch}"
-export SUPERVISOR_PREFIX="${P}"
-export PATH="${P}/venv/bin:${PATH}"
-PROTENIX_MODEL="${PROTENIX_MODEL:-protenix_base_default_v1.0.0}"
-
-nvidia-smi --query-gpu=timestamp,utilization.gpu,power.draw --format=csv -l 2 > "${JOBDIR}/gpu.csv" &
-SMI=$!
-cleanup() { kill "${SMI}" 2>/dev/null || true; }
-trap cleanup EXIT
+( while :; do
+    printf '%s,%s,%s\n' "$(date +%s)" \
+      "$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits | head -n1)" \
+      "$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "%d",(t-a)/1024}' /proc/meminfo)"
+    sleep 2
+  done ) > "${JOBDIR}/usage.csv" &
+SAMPLER=$!
+trap 'kill ${SAMPLER} 2>/dev/null || true' EXIT
 
 t0=$(date +%s.%N)
-echo "start $(date '+%F %T %z')" > "${JOBDIR}/result.txt"
-set +e
-"${BIN}" pred \
-  -i "${JOBDIR}/input.json" \
-  -o "${JOBDIR}/output" \
-  -n "${PROTENIX_MODEL}" \
-  --use_msa false -s 101 \
-  > "${JOBDIR}/pred.log" 2>&1
-rc=$?
-set -e
+rc=0
+"${RUN}" pred -i "${JOBDIR}/input.json" -o "${JOBDIR}/output" --use_msa false -s 101 > "${JOBDIR}/run.log" 2>&1 || rc=$?
 t1=$(date +%s.%N)
-wall=$(echo "${t1} - ${t0}" | bc)
-echo "end $(date '+%F %T %z') rc=${rc} wall=${wall}" >> "${JOBDIR}/result.txt"
-echo "prefix=${P}" >> "${JOBDIR}/result.txt"
+kill "${SAMPLER}" 2>/dev/null || true
 
-echo "=== result ==="
-cat "${JOBDIR}/result.txt"
-if [[ -d "${JOBDIR}/output/ERR" ]]; then
-  echo "=== HAS ERR ==="
-  ls -la "${JOBDIR}/output/ERR"
-  exit 1
-fi
-echo "=== NO_ERR ==="
-cif_n=$(find "${JOBDIR}/output" -name '*.cif' | wc -l)
-echo "cif_count=${cif_n}"
-[[ "${cif_n}" -gt 0 ]] || { echo "FAIL: no cif"; exit 1; }
-gpu_max=$(awk -F', ' 'NR>1{gsub(/ %/,"",$2); if($2+0>m)m=$2+0} END{print m+0}' "${JOBDIR}/gpu.csv")
-echo "gpu_max_util=${gpu_max}%"
-[[ "${gpu_max}" -gt 0 ]] || { echo "FAIL: gpu util 0"; exit 1; }
-[[ "${rc}" -eq 0 ]] || { echo "FAIL: rc=${rc}"; tail -40 "${JOBDIR}/pred.log"; exit "${rc}"; }
-echo "SMOKE_PROTENIX_OK"
-exit 0
+wall=$(echo "${t1} - ${t0}" | bc)
+cif=$(find "${JOBDIR}/output" -name '*.cif' 2>/dev/null | wc -l)
+err=NO_ERR; [[ -d "${JOBDIR}/output/ERR" ]] && err=HAS_ERR
+gpu=$(awk -F, '$2+0>m{m=$2+0}END{print m+0}' "${JOBDIR}/usage.csv")
+mem=$(awk -F, '$3+0>m{m=$3+0}END{print m+0}' "${JOBDIR}/usage.csv")
+echo "job=${JOBDIR} wall=${wall} rc=${rc} cif=${cif} ${err} gpu_max=${gpu}% mem_used_max_mib=${mem}" | tee "${JOBDIR}/result.txt"
+[[ ${rc} -eq 0 && ${cif} -gt 0 && ${err} == NO_ERR && ${gpu} -gt 0 ]] || { tail -n 30 "${JOBDIR}/run.log"; exit 1; }
+echo SMOKE_PROTENIX_OK
