@@ -36,6 +36,12 @@ VENV="${PREFIX}/venv"
 LOG_DIR="${PREFIX}/logs"
 TAG="[install_prefix_pxdesign]"
 
+src_is_git_root() {
+  local top
+  top="$(git -C "${SRC}" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [[ "$(readlink -f "${top}")" == "$(readlink -f "${SRC}")" ]]
+}
+
 die() { echo "${TAG} FAIL: $*" >&2; exit 1; }
 
 resolve_src() {
@@ -63,7 +69,7 @@ resolve_src_sha() {
     [[ -n "${SRC_SHA}" ]] || die "empty ${ROOT}/src/SRC_SHA"
     return 0
   fi
-  if git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1; then
+  if src_is_git_root; then
     SRC_SHA="$(git -C "${SRC}" rev-parse HEAD)"
     return 0
   fi
@@ -76,7 +82,7 @@ stage_upstream_src() {
   fi
   rm -rf "${STAGE}.partial"
   mkdir -p "${STAGE}.partial"
-  if git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1; then
+  if src_is_git_root; then
     git -C "${SRC}" archive --format=tar HEAD | tar -x -C "${STAGE}.partial"
   else
     cp -a "${SRC}/." "${STAGE}.partial/"
