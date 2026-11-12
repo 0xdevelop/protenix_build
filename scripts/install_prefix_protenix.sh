@@ -1,48 +1,29 @@
 #!/bin/bash
-# 目标机执行：在独立 prefix 用 uv 建 Python 3.14 venv，装 torch(cu130) + 最新 Protenix submodule。
-# 目标运行栈（用户硬约束）：CUDA 13 / Python 3.14 / Node 24 LTS；不用 conda / Docker。
-# 编排只用 shell；上游 Python 只在 prefix venv 内运行。不修改 submodule：
-#   源码通过 `git archive <submodule HEAD>` 导出到 prefix/src 后再做非 editable 安装，
-#   构建产生的 build/、*.egg-info 不会落到 build_srcs/protenix 工作树里。
+# 在独立 prefix 用 uv 建 Python 3.14 venv，装 torch(cu130) + Protenix。
+# 可用场景：
+#   1) 仓库内：./build.sh protenix 或本脚本（经 scripts/repo_src_defaults.sh 定位 submodule）
+#   2) 发布包内：包已含 src/ + constraints/，只使用包内文件（仍需联网拉 pip 依赖与公开权重）
 #
-# 依赖版本覆盖：constraints/py314-cu130.txt（uv --override 语义，每条有原因注释）。
-# 失败策略：任一步失败立即非零退出，并打印阶段/包名与报错日志尾部；没有任何“无 GPU 跳过”逻辑。
-#
-# 用法：
-#   bash scripts/install_prefix_protenix.sh
 # 可选环境变量：
-#   PREFIX_ROOT       若设，默认 prefix 为 <PREFIX_ROOT>/protenix（仍可被 PROTENIX_PREFIX 覆盖）
-#   PROTENIX_PREFIX   默认 <PREFIX_ROOT|/repo/prefix>/protenix
-#   PROTENIX_SRC      默认 <repo>/build_srcs/protenix（必须是 git 工作树）
-#   PROTENIX_PYTHON   默认 3.14（传给 uv venv --python）
-#   UV                默认 PATH 中的 uv，其次 ~/.local/bin/uv
-#   CUDA_HOME         默认 /usr/local/cuda-13.0
-#   TORCH_INDEX_URL   默认 https://download.pytorch.org/whl/cu130
-#   PYPI_INDEX_URL    默认 https://pypi.org/simple（国内可用 https://mirrors.aliyun.com/pypi/simple）
-#   RECREATE_VENV=1   删除并重建 prefix/venv
-#   LAYERNORM_TYPE    默认 torch（上游文档的回退开关，见下方说明）
-#   PROTENIX_MODEL    模型版本单一切换点，默认取 conf/protenix.env，再默认 protenix_base_default_v1.0.0。
-#                     脚本只会下载非 v2 的公开权重；PROTENIX_MODEL=protenix-v2 且本地没有
-#                     $PROTENIX_ROOT_DIR/checkpoint/protenix-v2.pt 时直接失败（v2 需授权权重，官方地址 403，不尝试下载）。
-#   SKIP_WEIGHTS=1    不预取权重/CCD 缓存（推理时上游会自行下载）
-#   WEIGHTS_REUSE_FROM  已校验 prefix 根（含 protenix/data）；硬链接/拷贝并校 size（拷贝再校 sha256）
-#
-# 关于 fast_layernorm（上游自定义 CUDA 内核，import 时 JIT 编译）：
-#   在 torch 2.14 + CUDA 13 上编译失败，已核实原因：上游 torch_ext_compile.py 固定传 -std=c++17，
-#   而 torch 2.14 头文件要求 C++20（"#error C++20 or later compatible compiler is required to use PyTorch."）；
-#   且其 gencode 列表最高 sm_100，不含 GB10 的 sm_121。不改 submodule 的前提下，
-#   采用上游 docs/kernels.md 记载的回退：LAYERNORM_TYPE=torch（原生 PyTorch layernorm）。
+#   PREFIX_ROOT / PROTENIX_PREFIX / PROTENIX_SRC / PROTENIX_OVERRIDES / PROTENIX_PYTHON
+#   UV / CUDA_HOME / TORCH_INDEX_URL / PYPI_INDEX_URL / RECREATE_VENV / LAYERNORM_TYPE
+#   PROTENIX_MODEL（默认 v1；v2 需本地授权权重）/ SKIP_WEIGHTS / WEIGHTS_REUSE_FROM
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/weights_reuse.sh"
+if [[ -f "${ROOT}/scripts/repo_src_defaults.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT}/scripts/repo_src_defaults.sh"
+fi
+
 if [[ -n "${PREFIX_ROOT:-}" ]]; then
   PREFIX="${PROTENIX_PREFIX:-${PREFIX_ROOT}/protenix}"
 else
   PREFIX="${PROTENIX_PREFIX:-${ROOT}/prefix/protenix}"
 fi
-SRC="${PROTENIX_SRC:-${ROOT}/build_srcs/protenix}"
+
 PY_REQ="${PROTENIX_PYTHON:-3.14}"
 OVERRIDES="${PROTENIX_OVERRIDES:-${ROOT}/constraints/py314-cu130.txt}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
@@ -53,15 +34,27 @@ LOG_DIR="${PREFIX}/logs"
 TAG="[install_prefix_protenix]"
 
 TORCH_SPEC=(torch==2.14.1+cu130 torchvision==0.29.1+cu130)
-# override 只能替换已有依赖、不能新增：上游要求的 cuequivariance-ops-torch-cu12 被 override 移除后，
-# cu13 版必须在这里显式安装（否则 cuequivariance_ops_torch 缺失，推理在三角注意力处 ImportError）。
 EXTRA_REQS=(cuequivariance-ops-torch-cu13)
-# 只有 sdist、需要本机源码编译的包；deepspeed 的 setup.py 需要 import torch，关闭其构建隔离。
 NO_BUILD_ISOLATION_PKGS=(deepspeed)
 
 die() { echo "${TAG} FAIL: $*" >&2; exit 1; }
 
-# run_step <阶段名> <命令...>：命令输出写入日志；失败时打印包名/报错尾部并非零退出。
+resolve_src() {
+  if [[ -n "${PROTENIX_SRC:-}" ]]; then
+    SRC="${PROTENIX_SRC}"
+    return 0
+  fi
+  if [[ -f "${ROOT}/src/SRC_SHA" && -f "${ROOT}/src/protenix/setup.py" ]]; then
+    SRC="${ROOT}/src/protenix"
+    return 0
+  fi
+  if [[ -n "${REPO_PROTENIX_SRC:-}" && -f "${REPO_PROTENIX_SRC}/setup.py" ]]; then
+    SRC="${REPO_PROTENIX_SRC}"
+    return 0
+  fi
+  die "no Protenix source (set PROTENIX_SRC, or use a release package with src/protenix)"
+}
+
 run_step() {
   local step="$1"; shift
   local log="${LOG_DIR}/install_${step}.log"
@@ -70,12 +63,41 @@ run_step() {
   "$@" >"${log}" 2>&1 || rc=$?
   if [[ ${rc} -ne 0 ]]; then
     echo "${TAG} FAIL step=${step} rc=${rc} log=${log}" >&2
-    # uv 报错里会带 "Failed to build `pkg`" / "Because pkg..." 等包名信息
     grep -E "Failed to (build|download|prepare)|No solution found|Because |error:|Error" "${log}" | head -20 >&2 || true
     echo "${TAG} ---- last 40 lines of ${log} ----" >&2
     tail -n 40 "${log}" >&2
     exit 1
   fi
+}
+
+resolve_src_sha() {
+  if [[ -n "${SRC_SHA:-}" ]]; then
+    return 0
+  fi
+  if [[ -f "${ROOT}/src/SRC_SHA" ]]; then
+    SRC_SHA="$(tr -d '[:space:]' < "${ROOT}/src/SRC_SHA")"
+    [[ -n "${SRC_SHA}" ]] || die "empty ${ROOT}/src/SRC_SHA"
+    return 0
+  fi
+  if git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1; then
+    SRC_SHA="$(git -C "${SRC}" rev-parse HEAD)"
+    return 0
+  fi
+  die "cannot determine source SHA for ${SRC}"
+}
+
+stage_upstream_src() {
+  if [[ -f "${STAGE}/setup.py" ]]; then
+    return 0
+  fi
+  rm -rf "${STAGE}.partial"
+  mkdir -p "${STAGE}.partial"
+  if git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1; then
+    git -C "${SRC}" archive --format=tar HEAD | tar -x -C "${STAGE}.partial"
+  else
+    cp -a "${SRC}/." "${STAGE}.partial/"
+  fi
+  mv "${STAGE}.partial" "${STAGE}"
 }
 
 UV_BIN="${UV:-}"
@@ -86,22 +108,27 @@ if [[ -z "${UV_BIN}" ]]; then
 fi
 
 [[ -f "${OVERRIDES}" ]] || die "override file missing: ${OVERRIDES}"
-git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1 || die "src is not a git work tree: ${SRC} (git submodule update --init --recursive)"
-[[ -x "${CUDA_HOME}/bin/nvcc" ]] || die "nvcc not found under CUDA_HOME=${CUDA_HOME} (CUDA 13 toolkit required; fast_layernorm / deepspeed 编译需要)"
+resolve_src
+[[ -f "${SRC}/setup.py" ]] || die "Protenix setup.py missing under ${SRC}"
+[[ -x "${CUDA_HOME}/bin/nvcc" ]] || die "nvcc not found under CUDA_HOME=${CUDA_HOME} (CUDA 13 toolkit required)"
 command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found (NVIDIA driver required)"
 
 mkdir -p "${PREFIX}"/{data,logs,conf,bin,scripts,src}
-SRC_SHA="$(git -C "${SRC}" rev-parse HEAD)"
+resolve_src_sha
 echo "${TAG} prefix=${PREFIX}"
 echo "${TAG} src=${SRC} @ ${SRC_SHA}"
 echo "${TAG} uv=${UV_BIN} ($("${UV_BIN}" --version))"
 echo "${TAG} cuda=$("${CUDA_HOME}/bin/nvcc" --version | grep -o 'release [0-9.]*')  torch_index=${TORCH_INDEX_URL} pypi_index=${PYPI_INDEX_URL}"
 
-# conf/protenix.env：首次由模板渲染，已存在则不覆盖（后面权重路径依赖它）
-ENV_TMPL="${ROOT}/example_files/protenix.env"
 ENV_FILE="${PREFIX}/conf/protenix.env"
 if [[ ! -f "${ENV_FILE}" ]]; then
-  [[ -f "${ENV_TMPL}" ]] || die "env template missing: ${ENV_TMPL}"
+  if [[ -f "${ROOT}/example_files/protenix.env" ]]; then
+    ENV_TMPL="${ROOT}/example_files/protenix.env"
+  elif [[ -f "${ROOT}/conf/protenix.env" ]]; then
+    ENV_TMPL="${ROOT}/conf/protenix.env"
+  else
+    die "env template missing (expected example_files/protenix.env or conf/protenix.env)"
+  fi
   sed "s|/opt/protenix_build/prefix/protenix|${PREFIX}|g" "${ENV_TMPL}" > "${ENV_FILE}"
   echo "${TAG} wrote ${ENV_FILE}"
 fi
@@ -114,7 +141,6 @@ DATA_ROOT="${DATA_ROOT:-${PREFIX}/data}"
 CKPT="${DATA_ROOT}/checkpoint/${PROTENIX_MODEL}.pt"
 echo "${TAG} PROTENIX_MODEL=${PROTENIX_MODEL} PROTENIX_ROOT_DIR=${DATA_ROOT}"
 
-# 幂等早退：CLI + Python 3.14 + 模型权重 + 当前 submodule 快照目录仍在 → 不重装、不重下
 READY_MARK="${PREFIX}/conf/install.ready"
 STAGE="${PREFIX}/src/protenix-${SRC_SHA:0:12}"
 if [[ "${RECREATE_VENV:-0}" != "1" && -x "${VENV}/bin/protenix" && -x "${VENV}/bin/python" && -s "${CKPT}" && -f "${STAGE}/setup.py" ]]; then
@@ -131,7 +157,6 @@ if [[ "${RECREATE_VENV:-0}" != "1" && -x "${VENV}/bin/protenix" && -x "${VENV}/b
   fi
 fi
 
-# 1) venv（Python 3.14，uv 管理的解释器）
 if [[ "${RECREATE_VENV:-0}" == "1" && -d "${VENV}" ]]; then
   rm -rf "${VENV}"
   rm -f "${READY_MARK}"
@@ -144,24 +169,15 @@ PYV="$("${VENV}/bin/python" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3]
 echo "${TAG} venv=${VENV} python=${PYV}"
 export VIRTUAL_ENV="${VENV}"
 
-# 2) torch 栈先装（deepspeed 源码构建需要已安装的 torch）
 run_step torch "${UV_BIN}" pip install --python "${VENV}/bin/python" \
   --index-url "${PYPI_INDEX_URL}" --extra-index-url "${TORCH_INDEX_URL}" --index-strategy unsafe-best-match \
   "${TORCH_SPEC[@]}"
 
-# 3) 源码构建所需工具（无隔离构建的包要用到）
 run_step build_tools "${UV_BIN}" pip install --python "${VENV}/bin/python" --index-url "${PYPI_INDEX_URL}" \
   setuptools wheel ninja packaging cython "numpy>=2.4.1,<2.5"
 
-# 4) 导出 submodule 源码快照（不在 submodule 工作树里构建）
-if [[ ! -f "${STAGE}/setup.py" ]]; then
-  rm -rf "${STAGE}.partial"
-  mkdir -p "${STAGE}.partial"
-  git -C "${SRC}" archive --format=tar HEAD | tar -x -C "${STAGE}.partial"
-  mv "${STAGE}.partial" "${STAGE}"
-fi
+stage_upstream_src
 
-# 5) Protenix + 依赖（上游 requirements 经 override 文件覆盖）
 NBI_ARGS=()
 for p in "${NO_BUILD_ISOLATION_PKGS[@]}"; do NBI_ARGS+=(--no-build-isolation-package "${p}"); done
 run_step protenix env DS_BUILD_OPS=0 "${UV_BIN}" pip install --python "${VENV}/bin/python" \
@@ -170,7 +186,6 @@ run_step protenix env DS_BUILD_OPS=0 "${UV_BIN}" pip install --python "${VENV}/b
   "${NBI_ARGS[@]}" \
   "${STAGE}" "${EXTRA_REQS[@]}"
 
-# 6) 校验：CLI 存在、关键包可导入、torch 能看到 CUDA 13 GPU
 [[ -x "${VENV}/bin/protenix" ]] || die "protenix console_script missing after install"
 export PATH="${VENV}/bin:${CUDA_HOME}/bin:${PATH}"
 export LAYERNORM_TYPE="${LAYERNORM_TYPE:-torch}"
@@ -188,8 +203,7 @@ run_step verify_cli "${VENV}/bin/protenix" --help
 "${UV_BIN}" pip freeze --python "${VENV}/bin/python" > "${PREFIX}/conf/pip-freeze.txt"
 echo "${TAG} freeze -> ${PREFIX}/conf/pip-freeze.txt"
 
-# 7) 权重与 CCD 缓存：优先 WEIGHTS_REUSE_FROM 硬链接/拷贝校验，缺的再下载
-fetch_one() {  # fetch_one <URL 表的键> <目标文件>
+fetch_one() {
   local key="$1" dst="$2" url
   [[ -s "${dst}" ]] && { echo "${TAG} have ${dst}"; return 0; }
   url="$("${VENV}/bin/python" -c 'import sys; from protenix.web_service.dependency_url import URL; print(URL[sys.argv[1]])' "${key}")" \

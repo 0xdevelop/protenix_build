@@ -1,29 +1,27 @@
 #!/bin/bash
-# 目标机执行：在独立 prefix（prefix/pxdesign）用 uv 建 Python 3.14 venv，安装 PXDesign 及其官方依赖链：
-#   Protenix@v0.5.0+pxd（官方钉死版本，不用 build_srcs/protenix 最新 submodule；两个 venv 保持独立）、
-#   PXDesignBench@v0.1.2、ColabDesign、JAX（CUDA 13 插件）、torch 2.14.1+cu130。
-# 不用 conda / Docker / Python 3.11；版本覆盖见 constraints/pxdesign-py314-cu130.txt。
-# 失败即非零退出并打印阶段与报错；不做任何“无 GPU 跳过”。
-# 运行时（GB10 + Python 3.14 实测，见 docs/acceptance_pxdesign_gb10.md）必须：
-#   export LAYERNORM_TYPE=torch TOOL_WEIGHTS_ROOT=<prefix>/tool_weights PROTENIX_DATA_ROOT_DIR=<prefix>/protenix_data
-#   pxdesign pipeline ... --num_workers 0 --use_fast_ln False --load_checkpoint_dir <prefix>/release_data/checkpoint
+# 在独立 prefix 用 uv 建 Python 3.14 venv，安装 PXDesign 及其依赖链。
+# 可用场景：
+#   1) 仓库内：./build.sh pxdesign 或本脚本（经 scripts/repo_src_defaults.sh 定位 submodule）
+#   2) 发布包内：包已含 src/ + constraints/ + 补丁，只使用包内文件（仍需联网拉 pip 依赖与权重）
 #
-# 用法：
-#   bash scripts/install_prefix_pxdesign.sh
-# 可选环境变量：PREFIX_ROOT、PXDESIGN_PREFIX、PXDESIGN_SRC、PINNED_PROTENIX_REF(默认 v0.5.0+pxd)、
-#   PXDBENCH_REF(默认 v0.1.2)、COLABDESIGN_REF(默认 main)、UV、CUDA_HOME、TORCH_INDEX_URL、PYPI_INDEX_URL、
-#   WEIGHTS_REUSE_FROM（已校验 prefix 根，含 pxdesign/{release_data,tool_weights,protenix_data}）
+# 运行时需：LAYERNORM_TYPE=torch、TOOL_WEIGHTS_ROOT、PROTENIX_DATA_ROOT_DIR，
+# 以及 pipeline 参数 --num_workers 0 --use_fast_ln False --load_checkpoint_dir <prefix>/release_data/checkpoint
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/weights_reuse.sh"
+if [[ -f "${ROOT}/scripts/repo_src_defaults.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT}/scripts/repo_src_defaults.sh"
+fi
+
 if [[ -n "${PREFIX_ROOT:-}" ]]; then
   PREFIX="${PXDESIGN_PREFIX:-${PREFIX_ROOT}/pxdesign}"
 else
   PREFIX="${PXDESIGN_PREFIX:-${ROOT}/prefix/pxdesign}"
 fi
-SRC="${PXDESIGN_SRC:-${ROOT}/build_srcs/pxdesign}"
+
 PINNED_PROTENIX_REF="${PINNED_PROTENIX_REF:-v0.5.0+pxd}"
 PXDBENCH_REF="${PXDBENCH_REF:-v0.1.2}"
 COLABDESIGN_REF="${COLABDESIGN_REF:-main}"
@@ -36,6 +34,53 @@ LOG_DIR="${PREFIX}/logs"
 TAG="[install_prefix_pxdesign]"
 
 die() { echo "${TAG} FAIL: $*" >&2; exit 1; }
+
+resolve_src() {
+  if [[ -n "${PXDESIGN_SRC:-}" ]]; then
+    SRC="${PXDESIGN_SRC}"
+    return 0
+  fi
+  if [[ -f "${ROOT}/src/SRC_SHA" && -f "${ROOT}/src/pxdesign/setup.py" ]]; then
+    SRC="${ROOT}/src/pxdesign"
+    return 0
+  fi
+  if [[ -n "${REPO_PXDESIGN_SRC:-}" && -f "${REPO_PXDESIGN_SRC}/setup.py" ]]; then
+    SRC="${REPO_PXDESIGN_SRC}"
+    return 0
+  fi
+  die "no PXDesign source (set PXDESIGN_SRC, or use a release package with src/pxdesign)"
+}
+
+resolve_src_sha() {
+  if [[ -n "${SRC_SHA:-}" ]]; then
+    return 0
+  fi
+  if [[ -f "${ROOT}/src/SRC_SHA" ]]; then
+    SRC_SHA="$(tr -d '[:space:]' < "${ROOT}/src/SRC_SHA")"
+    [[ -n "${SRC_SHA}" ]] || die "empty ${ROOT}/src/SRC_SHA"
+    return 0
+  fi
+  if git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1; then
+    SRC_SHA="$(git -C "${SRC}" rev-parse HEAD)"
+    return 0
+  fi
+  die "cannot determine source SHA for ${SRC}"
+}
+
+stage_upstream_src() {
+  if [[ -f "${STAGE}/setup.py" ]]; then
+    return 0
+  fi
+  rm -rf "${STAGE}.partial"
+  mkdir -p "${STAGE}.partial"
+  if git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1; then
+    git -C "${SRC}" archive --format=tar HEAD | tar -x -C "${STAGE}.partial"
+  else
+    cp -a "${SRC}/." "${STAGE}.partial/"
+  fi
+  mv "${STAGE}.partial" "${STAGE}"
+}
+
 run_step() {
   local step="$1"; shift
   local log="${LOG_DIR}/install_${step}.log"
@@ -58,14 +103,14 @@ if [[ -z "${UV_BIN}" ]]; then
   else die "uv not found"; fi
 fi
 [[ -f "${OVERRIDES}" ]] || die "override file missing: ${OVERRIDES}"
-git -C "${SRC}" rev-parse --verify HEAD >/dev/null 2>&1 || die "src is not a git work tree: ${SRC}"
+resolve_src
+[[ -f "${SRC}/setup.py" ]] || die "PXDesign setup.py missing under ${SRC}"
 [[ -x "${CUDA_HOME}/bin/nvcc" ]] || die "nvcc not found under CUDA_HOME=${CUDA_HOME}"
 
 mkdir -p "${PREFIX}"/{release_data/checkpoint,tool_weights,protenix_data,logs,conf,bin,src}
-SRC_SHA="$(git -C "${SRC}" rev-parse HEAD)"
+resolve_src_sha
 echo "${TAG} prefix=${PREFIX} src=${SRC}@${SRC_SHA:0:12} protenix=${PINNED_PROTENIX_REF} pxdbench=${PXDBENCH_REF}"
 
-# 1) venv：必须是 3.14；旧的非 3.14 venv 改名保留（不删除）
 if [[ -x "${VENV}/bin/python" ]]; then
   v="$("${VENV}/bin/python" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
   if [[ "${v}" != "3.14" ]]; then
@@ -76,36 +121,25 @@ fi
 [[ -x "${VENV}/bin/python" ]] || run_step venv "${UV_BIN}" venv --python 3.14 --seed "${VENV}"
 export VIRTUAL_ENV="${VENV}"
 
-# 2) torch 先装（deepspeed 源码构建需要）
 run_step torch "${UV_BIN}" pip install --python "${VENV}/bin/python" \
   --index-url "${PYPI_INDEX_URL}" --extra-index-url "${TORCH_INDEX_URL}" --index-strategy unsafe-best-match \
   "torch==2.14.1+cu130"
 run_step build_tools "${UV_BIN}" pip install --python "${VENV}/bin/python" --index-url "${PYPI_INDEX_URL}" \
   setuptools wheel ninja packaging cython "numpy>=2.0,<2.5"
 
-# 3) PXDesign 源码快照（不在 submodule 工作树内构建）。
-#    以 editable 方式安装这份快照（与上游 `pip install -e .` 一致）：上游 pxdesign/configs 等目录没有 __init__.py，
-#    非 editable 安装时 find_packages 会漏掉它们（实测 ModuleNotFoundError: pxdesign.configs）。
 STAGE="${PREFIX}/src/pxdesign-${SRC_SHA:0:12}"
-if [[ ! -f "${STAGE}/setup.py" ]]; then
-  rm -rf "${STAGE}.partial"; mkdir -p "${STAGE}.partial"
-  git -C "${SRC}" archive --format=tar HEAD | tar -x -C "${STAGE}.partial"
-  mv "${STAGE}.partial" "${STAGE}"
-fi
+stage_upstream_src
 
-# 3b) 快照上的 Python 3.14 兼容补丁（只改 prefix 里的快照，不改 submodule）：
-#     3.14 的 argparse 会在 add_argument 时校验 help 字符串，上游 pxd_server/*.py 的 "0-5%, 5-15%" 未转义，
-#     报 ValueError: badly formed help string，pipeline 最后画难度图那步失败（rc=1）。已打过则跳过。
 STAGE_PATCH="${ROOT}/constraints/pxdesign-py314-argparse-percent.patch"
+[[ -f "${STAGE_PATCH}" ]] || die "patch missing: ${STAGE_PATCH}"
 if patch -p1 -d "${STAGE}" -R -s -f --dry-run -i "${STAGE_PATCH}" >/dev/null 2>&1; then
   echo "${TAG} pxdesign stage patch already applied"
 else
   patch -p1 -d "${STAGE}" -N -f -i "${STAGE_PATCH}" || die "apply ${STAGE_PATCH} failed"
 fi
 
-# 4) 全部依赖一次解析安装（上游 requirements.txt + install.sh 里逐个 pip 的包）
 REQS=(
-  -r "${SRC}/requirements.txt"
+  -r "${STAGE}/requirements.txt"
   "protenix @ git+https://github.com/bytedance/Protenix.git@${PINNED_PROTENIX_REF}"
   "pxdbench @ git+https://github.com/bytedance/PXDesignBench.git@${PXDBENCH_REF}"
   "colabdesign @ git+https://github.com/sokrypton/ColabDesign.git@${COLABDESIGN_REF}"
@@ -119,10 +153,8 @@ run_step deps env DS_BUILD_OPS=0 "${UV_BIN}" pip install --python "${VENV}/bin/p
   --no-build-isolation-package deepspeed \
   "${REQS[@]}"
 
-# 4b) pxdbench 运行期补丁（只改 venv 内已安装的 pxdbench，不改 submodule）：
-#     AF2 子进程把 np.float32（biopython 坐标算出的 RMSD）直接 json.dump，报 "Object of type float32 is not JSON serializable"，
-#     pipeline 随即失败。补丁只给 json.dump 加 default=float。已打过则跳过。
 PATCH_FILE="${ROOT}/constraints/pxdbench-af2-json-float32.patch"
+[[ -f "${PATCH_FILE}" ]] || die "patch missing: ${PATCH_FILE}"
 SITE_PKGS="$("${VENV}/bin/python" -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 if patch -p1 -d "${SITE_PKGS}" -R -s -f --dry-run -i "${PATCH_FILE}" >/dev/null 2>&1; then
   echo "${TAG} pxdbench patch already applied"
@@ -130,7 +162,6 @@ else
   run_step patch_pxdbench patch -p1 -d "${SITE_PKGS}" -N -f -i "${PATCH_FILE}"
 fi
 
-# 5) 校验（与上游 install.sh 的 sanity check 同一组模块 + GPU 可见性）
 export PATH="${VENV}/bin:${CUDA_HOME}/bin:${PATH}"
 export LAYERNORM_TYPE="${LAYERNORM_TYPE:-torch}"
 run_step verify_import "${VENV}/bin/python" -c '
@@ -146,7 +177,6 @@ cat "${LOG_DIR}/install_verify_import.log"
 run_step verify_cli "${VENV}/bin/pxdesign" pipeline --help
 "${UV_BIN}" pip freeze --python "${VENV}/bin/python" > "${PREFIX}/conf/pip-freeze.txt"
 
-# 6) 权重：优先 WEIGHTS_REUSE_FROM 硬链接/拷贝并校 size（拷贝再校 sha256）
 if [[ -n "${WEIGHTS_REUSE_FROM:-}" ]]; then
   REUSE_P="${WEIGHTS_REUSE_FROM}/pxdesign"
   [[ -d "${REUSE_P}" ]] || die "WEIGHTS_REUSE_FROM pxdesign missing: ${REUSE_P}"

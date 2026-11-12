@@ -261,13 +261,39 @@ pack_one_product() {
 
   local out_dir="${BUILD_MODE_ROOT}/${subdir}"
   rm -rf "${out_dir}"
-  mkdir -p "${out_dir}/bin" "${out_dir}/conf" "${out_dir}/systemd" "${out_dir}/scripts" "${out_dir}/docs"
+  mkdir -p "${out_dir}/bin" "${out_dir}/conf" "${out_dir}/systemd" "${out_dir}/scripts" "${out_dir}/docs" \
+    "${out_dir}/constraints" "${out_dir}/src/${name}"
 
   [[ -d "${superv_cmd}" ]] || { echo "${TAG} missing supervisor cmd path ${superv_cmd}" >&2; exit 1; }
+  [[ -d "${src}" ]] || { echo "${TAG} missing upstream src ${src}" >&2; exit 1; }
+  git -C "${src}" rev-parse --verify HEAD >/dev/null 2>&1 \
+    || { echo "${TAG} upstream src is not a git work tree: ${src}" >&2; exit 1; }
+  local src_sha
+  src_sha="$(git -C "${src}" rev-parse HEAD)"
   echo "${TAG} go build ${superv_bin} for ${GOOS_TARGET}/${GOARCH_TARGET}"
   CGO_ENABLED=0 GOOS="${GOOS_TARGET}" GOARCH="${GOARCH_TARGET}" \
     go build -trimpath -ldflags "-s -w" -o "${out_dir}/bin/${superv_bin}" "./${superv_cmd}"
   chmod a+x "${out_dir}/bin/${superv_bin}"
+
+  echo "${TAG} bundle upstream ${name} @ ${src_sha:0:12} via git archive"
+  git -C "${src}" archive --format=tar HEAD | tar -x -C "${out_dir}/src/${name}"
+  printf '%s\n' "${src_sha}" > "${out_dir}/src/SRC_SHA"
+  [[ -f "${out_dir}/src/${name}/setup.py" ]] || { echo "${TAG} git archive missing setup.py for ${name}" >&2; exit 1; }
+
+  case "${name}" in
+    protenix)
+      cp -f "${project_path}/constraints/py314-cu130.txt" "${out_dir}/constraints/"
+      ;;
+    pxdesign)
+      cp -f "${project_path}/constraints/pxdesign-py314-cu130.txt" "${out_dir}/constraints/"
+      cp -f "${project_path}/constraints/pxdesign-py314-argparse-percent.patch" "${out_dir}/constraints/"
+      cp -f "${project_path}/constraints/pxdbench-af2-json-float32.patch" "${out_dir}/constraints/"
+      ;;
+    *)
+      echo "${TAG} unknown product for constraints bundle: ${name}" >&2
+      exit 1
+      ;;
+  esac
 
   cat > "${out_dir}/BUILD_INFO.txt" <<EOF
 product=${name}
@@ -277,7 +303,8 @@ run_mode=${RUN_MODE}
 goos=${GOOS_TARGET}
 goarch=${GOARCH_TARGET}
 install_prefix=${INSTALL_PREFIX}
-src_path=${src}
+src_path=src/${name}
+src_sha=${src_sha}
 env_policy=${policy}
 pinned_protenix_ref=${pinned_ref}
 torch_hint=${torch_hint}
@@ -290,7 +317,7 @@ commit=${commit_for_info}
 commit_head=${commit_hash}
 dirty=${commit_dirty}
 build_time=${build_time}
-note=prefix GPU/pip install is a separate build.sh target (protenix|pxdesign|all)
+note=self-contained zip: src/ + constraints/ + scripts/; pip/weights still need network
 EOF
 
   for f in "${service}" "${oneshot}" "${envf}" "${wrapper}" "${install_sh}" "${prefix_install}"; do
@@ -306,32 +333,108 @@ EOF
   chmod a+x "${out_dir}/install_${name}.sh"
   cp -f "${prefix_install}" "${out_dir}/scripts/$(basename "${prefix_install}")"
   chmod a+x "${out_dir}/scripts/$(basename "${prefix_install}")"
+  cp -f "${project_path}/scripts/weights_reuse.sh" "${out_dir}/scripts/weights_reuse.sh"
+  chmod a+x "${out_dir}/scripts/weights_reuse.sh"
+  # 不打包 scripts/repo_src_defaults.sh：包内只走 src/ 快照
 
   if [[ -d "${src}/examples" ]]; then
     mkdir -p "${out_dir}/examples_ref"
-    find "${src}/examples" -maxdepth 2 \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) -type f 2>/dev/null | head -20 | while read -r f; do
+    find "${src}/examples" -maxdepth 2 \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' -o -name '*.cif' \) -type f 2>/dev/null | head -40 | while read -r f; do
       rel="${f#${src}/examples/}"
       mkdir -p "${out_dir}/examples_ref/$(dirname "${rel}")"
       cp -f "${f}" "${out_dir}/examples_ref/${rel}"
     done || true
   fi
 
-  cat > "${out_dir}/docs/README_RUN.md" <<EOF
-# ${name} 包装包
+  local install_prefix_env
+  install_prefix_env="$(echo "${name}" | tr 'a-z' 'A-Z')_INSTALL_PREFIX"
+  if [[ "${name}" == "protenix" ]]; then
+    cat > "${out_dir}/docs/README_RUN.md" <<EOF
+# Protenix 使用说明
 
-- 冒烟：\`$(basename "${service}")\` Type=oneshot → \`bin/${superv_bin}\`（Go 预检；CLI/环境缺失即 failed）
-- 批作业：\`$(basename "${oneshot}")\` Type=oneshot → \`bin/${superv_bin} <cli 参数>\`（退出码透传）
-- 目标机 prefix：\`bash scripts/$(basename "${prefix_install}")\`（或仓库根 \`./build.sh ${name}\`）
-- 再：\`INSTALL_SYSTEMD=1 bash install_${name}.sh\`（需显式授权；本仓 build 不装 unit）
+## 前置
 
-env_policy=${policy}
+- NVIDIA GB10 / 对应 arch；CUDA 13 驱动与 \`nvcc\`（默认 \`CUDA_HOME=/usr/local/cuda-13.0\`）
+- 已装 uv，可解析 Python 3.14；无需 sudo / Docker / conda
+
+## 安装
+
+\`\`\`bash
+cd /path/to/protenix   # 本 zip 解压根目录
+PREFIX_ROOT=/opt/protenix_prefix \\
+WEIGHTS_REUSE_FROM=/path/to/existing_prefix_root \\
+  bash scripts/install_prefix_protenix.sh
+${install_prefix_env}=\$PREFIX_ROOT/protenix bash install_protenix.sh
+\`\`\`
+
+公开权重可自动下载；\`PROTENIX_MODEL=protenix-v2\` 需自备授权权重。包内已含 \`src/protenix/\`（见 \`src/SRC_SHA\`）与 \`constraints/\`。
+
+## 跑一次预测
+
+\`\`\`bash
+export PATH="\$PREFIX_ROOT/protenix/venv/bin:\$PATH" LAYERNORM_TYPE=torch SUPERVISOR_PREFIX="\$PREFIX_ROOT/protenix"
+"\$PREFIX_ROOT/protenix/bin/protenixd" pred \\
+  -i examples_ref/input.json -o "\$PREFIX_ROOT/protenix/jobs/out" \\
+  -n protenix_base_default_v1.0.0 --use_msa false -s 101
+\`\`\`
+
+验收：rc=0、输出有 \`.cif\`、无 \`ERR/\`、GPU 利用率 > 0。
+
+## systemd
+
+- 用户级（无 sudo）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=\$HOME/.config/systemd/user bash install_protenix.sh && systemctl --user daemon-reload\`
+- 系统级（需 root）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=/etc/systemd/system bash install_protenix.sh\`
+- 冒烟 unit：\`protenix.service\`（oneshot）；批作业：\`protenix-oneshot.service\`
 EOF
+  else
+    cat > "${out_dir}/docs/README_RUN.md" <<EOF
+# PXDesign 使用说明
+
+## 前置
+
+- NVIDIA GB10 / 对应 arch；CUDA 13 驱动与 \`nvcc\`（默认 \`CUDA_HOME=/usr/local/cuda-13.0\`）
+- 已装 uv，可解析 Python 3.14；无需 sudo / Docker / conda
+
+## 安装
+
+\`\`\`bash
+cd /path/to/pxdesign
+PREFIX_ROOT=/opt/pxdesign_prefix \\
+WEIGHTS_REUSE_FROM=/path/to/existing_prefix_root \\
+  bash scripts/install_prefix_pxdesign.sh
+${install_prefix_env}=\$PREFIX_ROOT/pxdesign bash install_pxdesign.sh
+\`\`\`
+
+包内已含 \`src/pxdesign/\`（见 \`src/SRC_SHA\`）、\`constraints/\` 与运行期补丁。
+
+## 跑一次设计
+
+\`\`\`bash
+export PATH="\$PREFIX_ROOT/pxdesign/venv/bin:\$PATH" LAYERNORM_TYPE=torch
+export TOOL_WEIGHTS_ROOT="\$PREFIX_ROOT/pxdesign/tool_weights"
+export PROTENIX_DATA_ROOT_DIR="\$PREFIX_ROOT/pxdesign/protenix_data"
+mkdir -p /tmp/pxd_job && cp -a examples_ref /tmp/pxd_job/examples
+( cd /tmp/pxd_job && pxdesign pipeline --preset preview \\
+  -i ./examples/PDL1_quick_start.yaml -o ./out \\
+  --N_sample 2 --num_workers 0 --use_fast_ln False \\
+  --load_checkpoint_dir "\$PREFIX_ROOT/pxdesign/release_data/checkpoint" )
+\`\`\`
+
+验收：rc=0、输出有 \`.cif\`、无 \`ERR/\`、GPU 利用率 > 0。
+
+## systemd
+
+- 用户级（无 sudo）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=\$HOME/.config/systemd/user bash install_pxdesign.sh && systemctl --user daemon-reload\`
+- 系统级（需 root）：\`INSTALL_SYSTEMD=1 SYSTEMD_PATH=/etc/systemd/system bash install_pxdesign.sh\`
+- 冒烟 unit：\`pxdesign.service\`（oneshot）；批作业：\`pxdesign-oneshot.service\`
+EOF
+  fi
 
   local zip_name="${name}_${GOOS_TARGET}_${GOARCH_TARGET}_${RUN_MODE}_${PROJECT_VERSION}.zip"
   local zip_path="${project_path}/${UPLOAD_TMP_DIR}/${zip_name}"
   rm -f "${zip_path}"
   ( cd "${BUILD_MODE_ROOT}" && zip -r "${zip_path}" "${subdir}" >/dev/null )
-  echo "${TAG} packed ${UPLOAD_TMP_DIR}/${zip_name}"
+  echo "${TAG} packed ${UPLOAD_TMP_DIR}/${zip_name} (src_sha=${src_sha:0:12})"
 }
 
 go_artifact_ready() {

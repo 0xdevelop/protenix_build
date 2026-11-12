@@ -29,11 +29,18 @@ fi
 [[ -f "${SCRIPT_DIR}/BUILD_INFO.txt" ]] && cp -f "${SCRIPT_DIR}/BUILD_INFO.txt" "${PREFIX}/BUILD_INFO.txt"
 
 if [[ "${INSTALL_SYSTEMD:-0}" == "1" ]]; then
+  mkdir -p "${SYSTEMD_PATH}"
   cp -f "${PREFIX}/systemd/protenix.service" "${SYSTEMD_PATH}/protenix.service"
   [[ -f "${PREFIX}/systemd/protenix-oneshot.service" ]] && cp -f "${PREFIX}/systemd/protenix-oneshot.service" "${SYSTEMD_PATH}/protenix-oneshot.service"
-  systemctl daemon-reload
-  systemctl enable protenix.service || true
-  echo "[install_${APP_NAME}] enabled protenix.service (ExecStart=protenixd); oneshot 模板已拷贝"
+  if [[ "${SYSTEMD_PATH}" == *"/systemd/user"* ]]; then
+    systemctl --user daemon-reload
+    systemctl --user enable protenix.service || true
+    echo "[install_${APP_NAME}] enabled --user protenix.service; oneshot 模板已拷贝"
+  else
+    systemctl daemon-reload
+    systemctl enable protenix.service || true
+    echo "[install_${APP_NAME}] enabled protenix.service; oneshot 模板已拷贝"
+  fi
 else
   echo "[install_${APP_NAME}] skip systemd (set INSTALL_SYSTEMD=1)"
 fi
