@@ -180,7 +180,8 @@ cmd_uninstall() {
     return 0
   fi
   rm -rf "${PREFIX}/releases" "${PREFIX}/bin"
-  rm -f "${PREFIX}/current" "${PREFIX}/previous" "${MARKER}"
+  rm -f "${PREFIX}/current" "${PREFIX}/previous"
+  # 保留 ${MARKER}，以便之后仍可 uninstall --purge 清掉配置与权重
   say "已卸载程序。保留：${PREFIX}/conf（配置）和 ${PREFIX}/data（权重）"
   say "连同配置和权重一起删除：$0 uninstall --purge"
 }
