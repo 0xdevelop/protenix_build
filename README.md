@@ -40,28 +40,26 @@ git submodule update --init --recursive
 - 模型版本单一切换点：`conf/protenix.env` 的 `PROTENIX_MODEL`（默认 v1；v2 需授权权重）。
 - 验收记录：`docs/acceptance_protenix_gb10.md`。
 
-## gen / build（双 arch）
+## gen / build
 
 ```bash
 chmod a+x gen_pre_build_config.sh build.sh
-./gen_pre_build_config.sh all
-./gen_pre_build_config.sh validate gen_pre_build_config_linux_amd64.yaml
-./gen_pre_build_config.sh validate gen_pre_build_config_linux_arm64.yaml
-
-bash build.sh release linux_amd64
-bash build.sh release linux_arm64
+./gen_pre_build_config.sh all   # 生成双 arch yaml（版本唯一来源）
+./build.sh --help
+./build.sh                      # 默认 all：Go 双 arch 打包 + prefix/protenix + prefix/pxdesign
+./build.sh go                   # 只打包 Go
+./build.sh protenix             # 只装 prefix/protenix
+./build.sh pxdesign             # 只装 prefix/pxdesign（独立 venv）
 ```
 
-产物：`build/upload_tmp_dir/{protenix,pxdesign}_linux_{amd64|arm64}_release_v*.zip`
+产物：
+- `build/upload_tmp_dir/{protenix,pxdesign}_linux_{amd64|arm64}_release_v*.zip`
+- `prefix/protenix`、`prefix/pxdesign`（两套独立 venv，不合并）
 
-## 目标机装 prefix
+已就绪步骤会跳过；强制重做：`FORCE_GO=1` / `FORCE_PROTENIX=1` / `FORCE_PXDESIGN=1`。
+验收记录：`docs/acceptance_build_sh.md`。
 
-```bash
-bash scripts/install_prefix_protenix.sh
-bash scripts/install_prefix_pxdesign.sh
-```
-
-然后解压 zip，`INSTALL_SYSTEMD=1 bash install_*.sh`。
+目标机也可直接：`bash scripts/install_prefix_protenix.sh` / `bash scripts/install_prefix_pxdesign.sh`，再解压 zip 后 `INSTALL_SYSTEMD=1 bash install_*.sh`（需显式授权）。
 
 ## 发版边界
 

@@ -7,7 +7,7 @@
 #
 # 双环境策略（不可合并）：
 # - prefix/protenix：最新 Protenix submodule（Python 3.14 + torch 2.14.1+cu130，覆盖见 constraints/py314-cu130.txt）
-# - prefix/pxdesign：官方钉死 Protenix v0.5.0+pxd + torch 2.3.1
+# - prefix/pxdesign：官方钉死 Protenix v0.5.0+pxd + torch 2.14.1+cu130（独立 venv）
 #   （不要用最新 submodule 填 pxdesign env）
 #
 # 目标运行栈（用户硬约束）：CUDA 13 / Python 3.14 / Node 24 LTS。
@@ -76,7 +76,7 @@ products:
     prefix_install_script: scripts/install_prefix_pxdesign.sh
     env_policy: pinned_protenix_v0_5_0_pxd
     pinned_protenix_ref: v0.5.0+pxd
-    torch_hint: "2.3.1"
+    torch_hint: "2.14.1+cu130"
     cli_name: pxdesign
     wrapper_name: pxdesign-run
     supervisor_bin: pxdesignd
@@ -91,7 +91,7 @@ paths:
   example_files_dir: example_files
   scripts_dir: scripts
 
-# 本阶段 build.sh 默认跳过完整 GPU/pip；目标机执行 prefix_install_script。
+# Go 打包步骤内不跑 GPU/pip；prefix 由 ./build.sh protenix|pxdesign|all 单独编排（幂等）。
 skip_prefix_install_in_build: true
 delivery: zip_and_systemd
 delivery_note: 主交付为 zip + systemd；不以 Docker 为主路径。

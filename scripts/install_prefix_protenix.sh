@@ -89,9 +89,44 @@ echo "${TAG} src=${SRC} @ ${SRC_SHA}"
 echo "${TAG} uv=${UV_BIN} ($("${UV_BIN}" --version))"
 echo "${TAG} cuda=$("${CUDA_HOME}/bin/nvcc" --version | grep -o 'release [0-9.]*')  torch_index=${TORCH_INDEX_URL} pypi_index=${PYPI_INDEX_URL}"
 
+# conf/protenix.env：首次由模板渲染，已存在则不覆盖（后面权重路径依赖它）
+ENV_TMPL="${ROOT}/example_files/protenix.env"
+ENV_FILE="${PREFIX}/conf/protenix.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  [[ -f "${ENV_TMPL}" ]] || die "env template missing: ${ENV_TMPL}"
+  sed "s|/opt/protenix_build/prefix/protenix|${PREFIX}|g" "${ENV_TMPL}" > "${ENV_FILE}"
+  echo "${TAG} wrote ${ENV_FILE}"
+fi
+if [[ -z "${PROTENIX_MODEL:-}" ]]; then
+  PROTENIX_MODEL="$(sed -n 's/^PROTENIX_MODEL=//p' "${ENV_FILE}" | tail -n1 | tr -d '"')"
+fi
+PROTENIX_MODEL="${PROTENIX_MODEL:-protenix_base_default_v1.0.0}"
+DATA_ROOT="$(sed -n 's/^PROTENIX_ROOT_DIR=//p' "${ENV_FILE}" | tail -n1 | tr -d '"')"
+DATA_ROOT="${DATA_ROOT:-${PREFIX}/data}"
+CKPT="${DATA_ROOT}/checkpoint/${PROTENIX_MODEL}.pt"
+echo "${TAG} PROTENIX_MODEL=${PROTENIX_MODEL} PROTENIX_ROOT_DIR=${DATA_ROOT}"
+
+# 幂等早退：CLI + Python 3.14 + 模型权重 + 当前 submodule 快照目录仍在 → 不重装、不重下
+READY_MARK="${PREFIX}/conf/install.ready"
+STAGE="${PREFIX}/src/protenix-${SRC_SHA:0:12}"
+if [[ "${RECREATE_VENV:-0}" != "1" && -x "${VENV}/bin/protenix" && -x "${VENV}/bin/python" && -s "${CKPT}" && -f "${STAGE}/setup.py" ]]; then
+  PYV="$("${VENV}/bin/python" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])')"
+  if [[ "${PYV}" == 3.14.* ]]; then
+    {
+      echo "src_sha=${SRC_SHA}"
+      echo "model=${PROTENIX_MODEL}"
+      echo "python=${PYV}"
+    } > "${READY_MARK}"
+    echo "${TAG} skip: already ready python=${PYV} src_sha=${SRC_SHA:0:12} model=${PROTENIX_MODEL}"
+    echo "${TAG} status=ok src_sha=${SRC_SHA} model=${PROTENIX_MODEL} skipped=1"
+    exit 0
+  fi
+fi
+
 # 1) venv（Python 3.14，uv 管理的解释器）
 if [[ "${RECREATE_VENV:-0}" == "1" && -d "${VENV}" ]]; then
   rm -rf "${VENV}"
+  rm -f "${READY_MARK}"
 fi
 if [[ ! -x "${VENV}/bin/python" ]]; then
   run_step venv "${UV_BIN}" venv --python "${PY_REQ}" --seed "${VENV}"
@@ -111,7 +146,6 @@ run_step build_tools "${UV_BIN}" pip install --python "${VENV}/bin/python" --ind
   setuptools wheel ninja packaging cython "numpy>=2.4.1,<2.5"
 
 # 4) 导出 submodule 源码快照（不在 submodule 工作树里构建）
-STAGE="${PREFIX}/src/protenix-${SRC_SHA:0:12}"
 if [[ ! -f "${STAGE}/setup.py" ]]; then
   rm -rf "${STAGE}.partial"
   mkdir -p "${STAGE}.partial"
@@ -146,23 +180,7 @@ run_step verify_cli "${VENV}/bin/protenix" --help
 "${UV_BIN}" pip freeze --python "${VENV}/bin/python" > "${PREFIX}/conf/pip-freeze.txt"
 echo "${TAG} freeze -> ${PREFIX}/conf/pip-freeze.txt"
 
-# 7) conf/protenix.env：首次安装时由 example_files/protenix.env 渲染（/opt 前缀替换为本 prefix），已存在则不覆盖
-ENV_TMPL="${ROOT}/example_files/protenix.env"
-ENV_FILE="${PREFIX}/conf/protenix.env"
-if [[ ! -f "${ENV_FILE}" ]]; then
-  [[ -f "${ENV_TMPL}" ]] || die "env template missing: ${ENV_TMPL}"
-  sed "s|/opt/protenix_build/prefix/protenix|${PREFIX}|g" "${ENV_TMPL}" > "${ENV_FILE}"
-  echo "${TAG} wrote ${ENV_FILE}"
-fi
-if [[ -z "${PROTENIX_MODEL:-}" ]]; then
-  PROTENIX_MODEL="$(sed -n 's/^PROTENIX_MODEL=//p' "${ENV_FILE}" | tail -n1 | tr -d '"')"
-fi
-PROTENIX_MODEL="${PROTENIX_MODEL:-protenix_base_default_v1.0.0}"
-DATA_ROOT="$(sed -n 's/^PROTENIX_ROOT_DIR=//p' "${ENV_FILE}" | tail -n1 | tr -d '"')"
-DATA_ROOT="${DATA_ROOT:-${PREFIX}/data}"
-echo "${TAG} PROTENIX_MODEL=${PROTENIX_MODEL} PROTENIX_ROOT_DIR=${DATA_ROOT}"
-
-# 8) 权重与 CCD 缓存预取（URL 取自上游 protenix.web_service.dependency_url，不在本仓硬编码）
+# 7) 权重与 CCD 缓存预取（URL 取自上游 protenix.web_service.dependency_url，不在本仓硬编码）
 fetch_one() {  # fetch_one <URL 表的键> <目标文件>
   local key="$1" dst="$2" url
   [[ -s "${dst}" ]] && { echo "${TAG} have ${dst}"; return 0; }
@@ -173,7 +191,6 @@ fetch_one() {  # fetch_one <URL 表的键> <目标文件>
   curl -fL --retry 3 -o "${dst}.part" "${url}" || { rm -f "${dst}.part"; die "download failed: ${key} ${url}"; }
   mv "${dst}.part" "${dst}"
 }
-CKPT="${DATA_ROOT}/checkpoint/${PROTENIX_MODEL}.pt"
 if [[ "${PROTENIX_MODEL}" == protenix-v2* ]]; then
   [[ -s "${CKPT}" ]] || die "PROTENIX_MODEL=${PROTENIX_MODEL} 需要授权权重，本地缺少 ${CKPT}（官方地址 403，脚本不下载；请放入授权权重后重试，或改回 v1）"
   echo "${TAG} using licensed local weights ${CKPT}"
@@ -187,4 +204,9 @@ elif [[ "${SKIP_WEIGHTS:-0}" != "1" ]]; then
     echo "${TAG} NOTE: ${PROTENIX_MODEL} 还需要 ESM 权重，首次推理时由上游自动下载" >&2
   fi
 fi
+{
+  echo "src_sha=${SRC_SHA}"
+  echo "model=${PROTENIX_MODEL}"
+  echo "python=${PYV}"
+} > "${READY_MARK}"
 echo "${TAG} status=ok src_sha=${SRC_SHA} model=${PROTENIX_MODEL}"
