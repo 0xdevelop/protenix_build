@@ -85,7 +85,10 @@ build_release() {
 verify_release() {
   local rel="$1"
   [[ -x "${rel}/venv/bin/${CLI}" ]] || { echo "${TAG} 缺少 ${rel}/venv/bin/${CLI}" >&2; return 1; }
-  "${rel}/venv/bin/${CLI}" --help >/dev/null 2>&1 || { echo "${TAG} ${CLI} --help 失败" >&2; return 1; }
+  # 上游 import 时可能触发自定义内核，需与运行期一致的环境
+  local help_args=(--help)
+  [[ "${CLI}" == "pxdesign" ]] && help_args=(pipeline --help)
+  env LAYERNORM_TYPE="${LAYERNORM_TYPE:-torch}" CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.0}"     "${rel}/venv/bin/${CLI}" "${help_args[@]}" >/dev/null 2>&1     || { echo "${TAG} ${CLI} ${help_args[*]} 失败" >&2; return 1; }
 }
 
 install_entry() {
