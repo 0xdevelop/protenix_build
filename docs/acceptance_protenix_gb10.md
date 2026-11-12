@@ -30,7 +30,7 @@ protenixd pred -i jobs/input.json -o jobs/run3/output -n ${PROTENIX_MODEL} --use
 - 结构检查：sample_0 有 5370 个 ATOM、693 个 CA（= 序列长度），相邻 CA 平均距离 3.76 Å、无 3.4–4.2 Å 以外的异常；无 NaN
 - 置信度：pLDDT 33.9、pTM 0.25（该示例序列大段无序且未用 MSA，低分符合预期，不代表环境问题）
 
-## 踩过的坑（都已在 constraints / 安装脚本中修正）
+## 踩过的坑（都已在 deps / patches / 安装脚本中修正）
 1. biotite 1.8.0 → `BondList has no attribute '_bonds'`，**上游此时退出码仍为 0，只产出 ERR/**。验收必须检查 CIF，不能只看退出码。已钉回 1.4.0。
 2. `cuequivariance-ops-torch-cu13` 未安装 → 三角注意力 ImportError（同样退出码 0）。原因：uv override 只能替换已有依赖、不能新增；安装脚本已显式安装。
 3. fast_layernorm JIT 编译失败 → 上游文档回退 `LAYERNORM_TYPE=torch`。

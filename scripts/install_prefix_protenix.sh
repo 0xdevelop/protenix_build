@@ -2,7 +2,7 @@
 # 在独立 prefix 用 uv 建 Python 3.14 venv，装 torch(cu130) + Protenix。
 # 可用场景：
 #   1) 仓库内：./build.sh protenix 或本脚本（经 scripts/repo_src_defaults.sh 定位 submodule）
-#   2) 发布包内：包已含 src/ + constraints/，只使用包内文件（仍需联网拉 pip 依赖与公开权重）
+#   2) 发布包内：包已含 src/ + deps/，只使用包内文件（仍需联网拉 pip 依赖与公开权重）
 #
 # 可选环境变量：
 #   PREFIX_ROOT / PROTENIX_PREFIX / PROTENIX_SRC / PROTENIX_OVERRIDES / PROTENIX_PYTHON
@@ -25,7 +25,7 @@ else
 fi
 
 PY_REQ="${PROTENIX_PYTHON:-3.14}"
-OVERRIDES="${PROTENIX_OVERRIDES:-${ROOT}/constraints/py314-cu130.txt}"
+OVERRIDES="${PROTENIX_OVERRIDES:-${ROOT}/deps/protenix.txt}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://pypi.org/simple}"
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.0}"

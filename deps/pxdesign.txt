@@ -1,7 +1,7 @@
-# constraints/pxdesign-py314-cu130.txt
+# deps/pxdesign.txt
 # PXDesign 独立 prefix（prefix/pxdesign/venv，与 prefix/protenix 分开，不合并）在 Python 3.14 / CUDA 13 / aarch64 上的外层覆盖。
 # 依赖来源：build_srcs/pxdesign/requirements.txt + 上游 install.sh（Protenix@v0.5.0+pxd、PXDesignBench@v0.1.2、
-#           ColabDesign、jax[cuda]、dm-haiku/optax/transformers 等）。用法同 py314-cu130.txt（uv --override）。
+#           ColabDesign、jax[cuda]、dm-haiku/optax/transformers 等）。用法同 deps/protenix.txt（uv --override）。
 # 每条写原因；能保持上游版本就保持。
 
 # --- PyTorch：上游 torch==2.3.1（cu12，无 cp314）→ 与 prefix/protenix 同一锚点

@@ -2,7 +2,7 @@
 # 在独立 prefix 用 uv 建 Python 3.14 venv，安装 PXDesign 及其依赖链。
 # 可用场景：
 #   1) 仓库内：./build.sh pxdesign 或本脚本（经 scripts/repo_src_defaults.sh 定位 submodule）
-#   2) 发布包内：包已含 src/ + constraints/ + 补丁，只使用包内文件（仍需联网拉 pip 依赖与权重）
+#   2) 发布包内：包已含 src/ + deps/ + patches/，只使用包内文件（仍需联网拉 pip 依赖与权重）
 #
 # 运行时需：LAYERNORM_TYPE=torch、TOOL_WEIGHTS_ROOT、PROTENIX_DATA_ROOT_DIR，
 # 以及 pipeline 参数 --num_workers 0 --use_fast_ln False --load_checkpoint_dir <prefix>/release_data/checkpoint
@@ -25,7 +25,7 @@ fi
 PINNED_PROTENIX_REF="${PINNED_PROTENIX_REF:-v0.5.0+pxd}"
 PXDBENCH_REF="${PXDBENCH_REF:-v0.1.2}"
 COLABDESIGN_REF="${COLABDESIGN_REF:-main}"
-OVERRIDES="${PXDESIGN_OVERRIDES:-${ROOT}/constraints/pxdesign-py314-cu130.txt}"
+OVERRIDES="${PXDESIGN_OVERRIDES:-${ROOT}/deps/pxdesign.txt}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://pypi.org/simple}"
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.0}"
@@ -130,7 +130,7 @@ run_step build_tools "${UV_BIN}" pip install --python "${VENV}/bin/python" --ind
 STAGE="${PREFIX}/src/pxdesign-${SRC_SHA:0:12}"
 stage_upstream_src
 
-STAGE_PATCH="${ROOT}/constraints/pxdesign-py314-argparse-percent.patch"
+STAGE_PATCH="${ROOT}/patches/pxdesign-argparse-percent.patch"
 [[ -f "${STAGE_PATCH}" ]] || die "patch missing: ${STAGE_PATCH}"
 if patch -p1 -d "${STAGE}" -R -s -f --dry-run -i "${STAGE_PATCH}" >/dev/null 2>&1; then
   echo "${TAG} pxdesign stage patch already applied"
@@ -153,7 +153,7 @@ run_step deps env DS_BUILD_OPS=0 "${UV_BIN}" pip install --python "${VENV}/bin/p
   --no-build-isolation-package deepspeed \
   "${REQS[@]}"
 
-PATCH_FILE="${ROOT}/constraints/pxdbench-af2-json-float32.patch"
+PATCH_FILE="${ROOT}/patches/pxdbench-json-float.patch"
 [[ -f "${PATCH_FILE}" ]] || die "patch missing: ${PATCH_FILE}"
 SITE_PKGS="$("${VENV}/bin/python" -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')"
 if patch -p1 -d "${SITE_PKGS}" -R -s -f --dry-run -i "${PATCH_FILE}" >/dev/null 2>&1; then

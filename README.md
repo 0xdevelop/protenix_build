@@ -24,7 +24,7 @@ chmod a+x gen_pre_build_config.sh build.sh
 
 产物：
 
-- `build/upload_tmp_dir/{protenix,pxdesign}_linux_{amd64|arm64}_release_v*.zip`（自包含：上游源码快照、constraints、安装脚本、Go 二进制）
+- `build/upload_tmp_dir/{protenix,pxdesign}_linux_{amd64|arm64}_release_v*.zip`（自包含：上游源码快照、deps、patches、安装脚本、Go 二进制）
 - 默认 prefix：`prefix/protenix`、`prefix/pxdesign`（两套独立 venv）
 
 可选：`PREFIX_ROOT=/其它路径 WEIGHTS_REUSE_FROM=/已有prefix根 ./build.sh all`（权重大小校验后硬链接/拷贝）。

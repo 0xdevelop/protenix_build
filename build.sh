@@ -262,7 +262,7 @@ pack_one_product() {
   local out_dir="${BUILD_MODE_ROOT}/${subdir}"
   rm -rf "${out_dir}"
   mkdir -p "${out_dir}/bin" "${out_dir}/conf" "${out_dir}/systemd" "${out_dir}/scripts" "${out_dir}/docs" \
-    "${out_dir}/constraints" "${out_dir}/src/${name}"
+    "${out_dir}/deps" "${out_dir}/patches" "${out_dir}/src/${name}"
 
   [[ -d "${superv_cmd}" ]] || { echo "${TAG} missing supervisor cmd path ${superv_cmd}" >&2; exit 1; }
   [[ -d "${src}" ]] || { echo "${TAG} missing upstream src ${src}" >&2; exit 1; }
@@ -282,15 +282,15 @@ pack_one_product() {
 
   case "${name}" in
     protenix)
-      cp -f "${project_path}/constraints/py314-cu130.txt" "${out_dir}/constraints/"
+      cp -f "${project_path}/deps/protenix.txt" "${out_dir}/deps/"
       ;;
     pxdesign)
-      cp -f "${project_path}/constraints/pxdesign-py314-cu130.txt" "${out_dir}/constraints/"
-      cp -f "${project_path}/constraints/pxdesign-py314-argparse-percent.patch" "${out_dir}/constraints/"
-      cp -f "${project_path}/constraints/pxdbench-af2-json-float32.patch" "${out_dir}/constraints/"
+      cp -f "${project_path}/deps/pxdesign.txt" "${out_dir}/deps/"
+      cp -f "${project_path}/patches/pxdesign-argparse-percent.patch" "${out_dir}/patches/"
+      cp -f "${project_path}/patches/pxdbench-json-float.patch" "${out_dir}/patches/"
       ;;
     *)
-      echo "${TAG} unknown product for constraints bundle: ${name}" >&2
+      echo "${TAG} unknown product for deps bundle: ${name}" >&2
       exit 1
       ;;
   esac
@@ -317,7 +317,7 @@ commit=${commit_for_info}
 commit_head=${commit_hash}
 dirty=${commit_dirty}
 build_time=${build_time}
-note=self-contained zip: src/ + constraints/ + scripts/; pip/weights still need network
+note=self-contained zip: src/ + deps/ + patches/ + scripts/; pip/weights still need network
 EOF
 
   for f in "${service}" "${oneshot}" "${envf}" "${wrapper}" "${install_sh}" "${prefix_install}"; do
@@ -365,7 +365,7 @@ WEIGHTS_REUSE_FROM=/path/to/existing_prefix_root \\
 ${install_prefix_env}=\$PREFIX_ROOT/protenix bash install_protenix.sh
 \`\`\`
 
-公开权重可自动下载；\`PROTENIX_MODEL=protenix-v2\` 需自备授权权重。包内已含 \`src/protenix/\`（见 \`src/SRC_SHA\`）与 \`constraints/\`。
+公开权重可自动下载；\`PROTENIX_MODEL=protenix-v2\` 需自备授权权重。包内已含 \`src/protenix/\`（见 \`src/SRC_SHA\`）与 \`deps/\`。
 
 ## 跑一次预测
 
@@ -403,7 +403,7 @@ WEIGHTS_REUSE_FROM=/path/to/existing_prefix_root \\
 ${install_prefix_env}=\$PREFIX_ROOT/pxdesign bash install_pxdesign.sh
 \`\`\`
 
-包内已含 \`src/pxdesign/\`（见 \`src/SRC_SHA\`）、\`constraints/\` 与运行期补丁。
+包内已含 \`src/pxdesign/\`（见 \`src/SRC_SHA\`）、\`deps/\` 与 \`patches/\`。
 
 ## 跑一次设计
 
@@ -556,7 +556,7 @@ build_protenix() {
   echo "${TAG} install ${PROTENIX_PREFIX}"
   PROTENIX_SRC="${src}" \
     SRC_SHA="$(git -C "${src}" rev-parse HEAD)" \
-    PROTENIX_OVERRIDES="${project_path}/constraints/py314-cu130.txt" \
+    PROTENIX_OVERRIDES="${project_path}/deps/protenix.txt" \
     bash "${project_path}/scripts/install_prefix_protenix.sh"
   protenix_prefix_ready || { echo "${TAG} FAIL: protenix prefix not ready after install" >&2; exit 1; }
 }
@@ -587,7 +587,7 @@ build_pxdesign() {
   echo "${TAG} install ${PXDESIGN_PREFIX} (independent venv; not merged with protenix)"
   PXDESIGN_SRC="${src}" \
     SRC_SHA="$(git -C "${src}" rev-parse HEAD)" \
-    PXDESIGN_OVERRIDES="${project_path}/constraints/pxdesign-py314-cu130.txt" \
+    PXDESIGN_OVERRIDES="${project_path}/deps/pxdesign.txt" \
     bash "${project_path}/scripts/install_prefix_pxdesign.sh"
   pxdesign_prefix_ready || { echo "${TAG} FAIL: pxdesign prefix not ready after install" >&2; exit 1; }
 }

@@ -1,6 +1,6 @@
-# constraints/py314-cu130.txt
+# deps/protenix.txt
 # Protenix（build_srcs/protenix requirements.txt）在 Python 3.14 / CUDA 13.0 / aarch64(GB10) 上的外层覆盖文件。
-# 用法：uv pip install --override constraints/py314-cu130.txt ...
+# 用法：uv pip install --override deps/protenix.txt ...
 #   上游 setup.py 把 requirements.txt 里的 "==" 钉位原样写进 install_requires，
 #   普通 constraints（-c）无法放宽 "=="，所以这里按 uv 的 --override 语义使用：本文件条目整体替换上游同名要求。
 # 原则：不改 submodule；每条覆盖写明原因；能保持上游大版本就保持（只放宽到第一个有 cp314 aarch64 wheel 的同系列版本）。

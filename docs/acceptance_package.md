@@ -13,7 +13,7 @@
 ```bash
 # 代码提交后
 FORCE_GO=1 ./build.sh go
-# arm64 zip 含 git archive 源码快照 + constraints + examples_ref 整树
+# arm64 zip 含 git archive 源码快照 + deps + patches + examples_ref 整树
 ```
 
 `BUILD_INFO`：`commit` / `commit_head` 等于最终 HEAD、`dirty=0`，并含 `src_sha=`。
@@ -27,7 +27,7 @@ grep -RIn 'build_srcs\|/home/certa/workspace/protenix_build' \
   protenix/scripts protenix/install_protenix.sh \
   pxdesign/scripts pxdesign/install_pxdesign.sh
 # → GREP_CLEAN
-# 含 src/<product>/ + src/SRC_SHA、constraints/、scripts/weights_reuse.sh
+# 含 src/<product>/ + src/SRC_SHA、deps/、patches/、scripts/weights_reuse.sh
 # 不含 scripts/repo_src_defaults.sh
 # pxdesign/examples_ref/msa/PDL1/0/pairing.a3m 存在
 ```

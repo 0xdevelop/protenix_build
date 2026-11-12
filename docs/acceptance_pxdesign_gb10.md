@@ -28,9 +28,9 @@ PDL1 quick start 完整 pipeline（扩散设计 → ProteinMPNN → AF2 过滤�
 
 submodule 内容保持干净，Python 3.14 所需修正一律以外层 patch / 覆盖清单形式存放：
 
-- `constraints/pxdesign-py314-cu130.txt`：依赖覆盖，逐条写明原因。
-- `constraints/pxdesign-py314-argparse-percent.patch`
-- `constraints/pxdbench-af2-json-float32.patch`
+- `deps/pxdesign.txt`：依赖覆盖，逐条写明原因。
+- `patches/pxdesign-argparse-percent.patch`
+- `patches/pxdbench-json-float.patch`
 
 AF2 权重：`prefix/pxdesign/tool_weights/af2/params_model_1.npz`（373,069,562 B）、`params_model_1_ptm.npz`（373,103,340 B），均已完整下载。
 

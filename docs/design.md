@@ -11,7 +11,7 @@
 ## 源码与约束
 
 - 上游在 `build_srcs/{protenix,pxdesign}` submodule；**不修改** submodule 内文件
-- 上游 `requirements.txt` 钉位在 3.14/aarch64/cu130 上不可用时，用仓库外层 `constraints/` 覆盖，并在文件内逐条写原因
+- 上游 `requirements.txt` 钉位在 3.14/aarch64/cu130 上不可用时，用仓库外层 `deps/` 覆盖，并在文件内逐条写原因
 - 运行期兼容补丁（如 argparse `%`、pxdbench json float32）只打在 prefix 内快照或 site-packages，不回写 submodule
 
 ## 双 prefix
@@ -21,7 +21,7 @@
 
 ## 发布包
 
-- `./build.sh go` 产出 zip：Go supervisor、unit/env、**git archive 的上游快照**（`src/<product>/` + `src/SRC_SHA`）、对应 `constraints/`、安装脚本与 `weights_reuse.sh`
+- `./build.sh go` 产出 zip：Go supervisor、unit/env、**git archive 的上游快照**（`src/<product>/` + `src/SRC_SHA`）、对应 `deps/`、`patches/`、安装脚本与 `weights_reuse.sh`
 - 包内安装只读包内路径；联网仅用于 pip 与权重
 - 仓库内 `./build.sh protenix|pxdesign` 仍通过 `scripts/repo_src_defaults.sh` 指向 submodule（该文件不打进 zip）
 

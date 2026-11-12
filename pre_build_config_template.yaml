@@ -6,7 +6,7 @@
 # 编排：仅 Go + shell；上游 Python 只在 submodule/prefix 环境内跑。
 #
 # 双环境策略（不可合并）：
-# - prefix/protenix：最新 Protenix submodule（Python 3.14 + torch 2.14.1+cu130，覆盖见 constraints/py314-cu130.txt）
+# - prefix/protenix：最新 Protenix submodule（Python 3.14 + torch 2.14.1+cu130，覆盖见 deps/protenix.txt）
 # - prefix/pxdesign：官方钉死 Protenix v0.5.0+pxd + torch 2.14.1+cu130（独立 venv）
 #   （不要用最新 submodule 填 pxdesign env）
 #
