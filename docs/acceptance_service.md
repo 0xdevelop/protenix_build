@@ -1,5 +1,41 @@
 # 第三阶段服务验收
 
+## gRPC APIService.Call 门禁验收（2026-11-14 03:01 Asia/Singapore）
+
+在不改服务代码、不改 `build_srcs`、不改三仓、不装 MySQL、不改 Task 契约、不跑 GPU、不把邮件密钥写入仓库的前提下，临时把忽略文件 `example_files/config_local.yaml` 的 `auth_cfg.enabled` 设为 `true`，SQLite 改到隔离库 `./tmp/grpc-call-accept/protenix_service.db`，复用第七轮已构建的 `protenix_service` 二进制（2026-11-14 01:56，未重建），以 Debug 模式短时启动服务（`127.0.0.1:18001`–`18006`）。用仓库外的一次性 Go 客户端（`APIService` 已生成 stub：`github.com/0xdevelop/protenix_service/api/api_grpc/protobuf`）对 `127.0.0.1:18005` 实际调用 `APIService.Call`。本机无 `grpcurl`，未安装系统包，也未启用 systemd。验完已恢复原配置（`enabled: false`、原库路径，sha256 与改前一致），未留下进程、监听端口或含密钥的备份。桌面 Cursor worker 仍挂在既有仓库，不是本切片。
+
+gRPC 元数据键使用 `authorization`（小写；gRPC/HTTP2 元数据键大小写不敏感，服务端 `grpcIncomingMetadata(ctx, "authorization")` 读取后交给 `WithBearerToken`，载荷与 HTTP `Authorization` 头相同，值为 `Bearer …` 或空）。`CallRequest.method` 为 `tools/call`，业务方法名在 `params.name`。
+
+原始记录：`tmp/handoff-followup/phase3-service/grpc-call/`（结果已脱敏，不含密钥；一次性客户端与脚本也不进仓）。
+
+### 同进程核对
+
+| 检查 | 结果 |
+| --- | --- |
+| 监听 | `127.0.0.1:18001`–`18006` 均在听；gRPC 约 0.6s 后就绪 |
+| JSON-RPC `POST http://127.0.0.1:18001/` Public `test` | HTTP 200，`isError=false`，`this is test method, request is success`（14ms）。与第七轮同一套临时门禁配置 |
+
+### gRPC `APIService.Call`（`127.0.0.1:18005`，明文）
+
+传输层均成功（gRPC status OK）；业务结果在统一 `CallToolResult` 里（`isError` / `error_code`）。受保护方法耗时约 1ms，服务日志只见方法名，无 `Execute` / `cli_proc` / `storage_mysql is not enabled` / `protenix-run`，未进入 Execute。
+
+| 调用 | 结果 |
+| --- | --- |
+| Public `test`，无凭证 | `isError=false`，`this is test method, request is success` |
+| Public `test`，伪造 JWT `authorization: Bearer …` | 同样成功；Public 方法不因假凭证失败 |
+| Public `test`，伪造 `ptxk_` Bearer | 同样成功 |
+| 受保护 `protenix` / `pxdesign` / `task.list` / `auth.jwt_token.check`，无凭证 | `error_code=10004` `permission denied`，未进入 Execute |
+| 上述四个受保护方法，伪造 JWT 或伪造 `ptxk_` | 均为 `10004` `permission denied`，未进入 Execute |
+
+### 仍然有效的边界
+
+- 真实注册/登录仍缺 Resend 的 `email.api_key` 与 `from`。本机常驻 `config_local.yaml` 因此保持 `auth_cfg.enabled=false`。没有签发真实 `ptxk_`，也没有成功的登录 session。
+- 无 MySQL 时，即使通过门禁，HTTP 异步受理仍不会进入 `Execute`。
+- `task.cancel` 仍只取消 queued。未改模板 Task 契约，未装 MySQL，未跑 GPU。
+- 本切片只补第七轮留下的 gRPC `Call` 缺口，不是第四阶段，也不宣称生产级认证或全部安全。
+
+---
+
 ## auth 门禁启用后的注册/登录路径（2026-11-14 01:56–01:57 Asia/Singapore）
 
 在不改 `build_srcs`、不改三仓、不装 MySQL、不改 Task 契约、不跑 GPU、不把邮件密钥写入仓库的前提下，临时把忽略文件 `example_files/config_local.yaml` 的 `auth_cfg.enabled` 设为 `true`，SQLite 改到隔离库 `./tmp/auth-login-accept/protenix_service.db`，以 Debug 模式短时启动服务（`127.0.0.1:18001`–`18006`），验证门禁与注册/登录前置路径。验完已恢复原配置（`enabled: false`、原库路径），未留下进程或监听端口，未 enable systemd。桌面 Cursor worker 仍挂在既有仓库，不是本切片。
