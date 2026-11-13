@@ -1,0 +1,32 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="protenix_service-debug" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="protenix_service" />
+    <working_directory value="$PROJECT_DIR$" />
+    <kind value="FILE" />
+    <filePath value="$PROJECT_DIR$/main.go" />
+    <package value="github.com/0xdevelop/protenix_service" />
+    <directory value="$PROJECT_DIR$" />
+    <method v="2">
+      <option name="NpmBeforeRunTask" enabled="true">
+        <package-json value="$PROJECT_DIR$/test_ui/web/package.json" />
+        <command value="run" />
+        <scripts>
+          <script value="build" />
+        </scripts>
+        <node-interpreter value="project" />
+        <package-manager value="bun" />
+        <envs />
+      </option>
+      <option name="NpmBeforeRunTask" enabled="true">
+        <package-json value="$PROJECT_DIR$/frontend/package.json" />
+        <command value="run" />
+        <scripts>
+          <script value="build" />
+        </scripts>
+        <node-interpreter value="project" />
+        <package-manager value="bun" />
+        <envs />
+      </option>
+    </method>
+  </configuration>
+</component>

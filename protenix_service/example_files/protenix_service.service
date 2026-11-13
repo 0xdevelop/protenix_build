@@ -1,0 +1,16 @@
+[Unit]
+Description=protenix_service (systemd user unit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=5s
+ExecStart=/home/certa/workspace/protenix_build/protenix_service/protenix_service
+ExecStop=/bin/kill -TERM $MAINPID
+WorkingDirectory=/home/certa/workspace/protenix_build/protenix_service
+LimitNOFILE=102400
+
+[Install]
+WantedBy=default.target

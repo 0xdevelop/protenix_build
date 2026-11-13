@@ -1,0 +1,82 @@
+storage_cfg: # 存储。enabled 为 true 的引擎会打开，可以同时开多个
+  primary: "sqlite" # 主关系库；多个关系库时必须显式指定
+  storage_sqlite:
+    enabled: true
+    path: "./data/protenix_service.db"
+  # Async/Task 固定走 storage.MysqlDB；未启用 MySQL 时异步受理失败，不会改走 SQLite。
+  storage_mysql:
+    enabled: false
+    dbname: "protenix_service"
+    dbuser: "protenix_service"
+    dbpwd: "protenix_service_pwd"
+    dbaddress: "127.0.0.1"
+    dbport: 3306
+  storage_postgresql:
+    enabled: false
+    dbname: "protenix_service"
+    dbuser: "protenix_service"
+    dbpwd: "protenix_service_pwd"
+    dbaddress: "127.0.0.1"
+    dbport: 5432
+    sslmode: "disable"
+  storage_redis:
+    enabled: false
+    addr: "127.0.0.1:6379"
+    password: ""
+    db_index: 0
+    database: false
+api_cfg: # API configurations
+  api_cfg_jsonRPC: # API configurations with JSON-RPC
+    enabled: true
+    bind_address: "0.0.0.0" # 监听地址（必填）：127.0.0.1 仅本机；0.0.0.0 对外
+    port: 13001
+    encryption_enabled: false
+  api_cfg_mcp: # API configurations with MCP
+    enabled: true
+    bind_address: "0.0.0.0" # 监听地址（必填）：127.0.0.1 仅本机；0.0.0.0 对外
+    port: 13002
+    mcp_transport_type: "streamable-http"
+  api_cfg_websocket: # API configurations with WebSocket
+    enabled: true
+    bind_address: "0.0.0.0" # 监听地址（必填）：127.0.0.1 仅本机；0.0.0.0 对外
+    port: 13004
+    allowed_origins:
+    - "127.0.0.1:*"
+    - "localhost:*"
+  api_cfg_grpc: # API configurations with gRPC
+    enabled: true
+    bind_address: "0.0.0.0" # 监听地址（必填）：127.0.0.1 仅本机；0.0.0.0 对外
+    port: 13005
+test_ui_cfg: # 开发测试台
+  enabled: true
+  bind_address: "127.0.0.1" # 监听地址（必填）：127.0.0.1 仅本机；0.0.0.0 对外
+  port: 13003
+frontend_cfg: # 前端页面服务配置
+  enabled: true
+  bind_address: "127.0.0.1"
+  port: 13006
+policy_cfg: # Policy scheduling configurations
+  policy_duration: "10s" # 定期轮询事项执行完一次到下一次的间隔，Go duration 字符串
+  workers_scaller: 5 # 最大异步并发 = CPU 数量 × 倍率
+auth_cfg: # Auth configurations
+  enabled: true # 统一准入门禁开关；缺省 true；false=门禁放行不提供身份，依赖身份的方法不可用
+  auth_type: "jwt" # 鉴权类型；缺省与当前唯一支持值均为 jwt
+  email: # Email delivery configuration
+    provider: "resend"
+    api_key: ""
+    from: ""
+    reply_to: ""
+    product_name: "protenix_service"
+    verification_subject: "protenix_service verification code"
+  verification: # Verification code policy
+    code_ttl_seconds: 600
+    max_attempts: 5
+    resend_interval_seconds: 60
+    hourly_send_limit: 5
+    code_hash_secret: "dev_local_code_hash_secret_0123456789"
+  session: # JWT and refresh session policy
+    jwt_signing_secret: "dev_local_jwt_signing_secret_0123456789"
+    issuer: "protenix_service"
+    audience: "protenix_service"
+    access_token_ttl_seconds: 900
+    refresh_token_ttl_seconds: 2592000

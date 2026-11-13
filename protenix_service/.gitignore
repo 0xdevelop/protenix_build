@@ -1,0 +1,34 @@
+.DS_Store
+/bin/
+*~
+*.swp
+.idea/
+.vscode/
+
+build/
+
+CMake/
+
+.CLAUDE.md
+.claude/
+
+logs/
+*.log
+/data/
+
+ai_write/
+
+.trae/
+tmp/
+test_ui/web/node_modules/
+# dist 不进仓：build.sh 无条件跑 gen_test_ui.sh 现场构建，CI 装 bun；Debug 启动时 LoadTestWeb 也现场构建
+test_ui/web/dist/
+frontend/dist/
+frontend/node_modules/
+.playwright-mcp/
+.auto_coding/
+
+
+# 本地验收配置与二进制（含密钥，勿提交）
+example_files/config_local.yaml
+/protenix_service

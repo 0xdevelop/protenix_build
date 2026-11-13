@@ -17,3 +17,8 @@ prefix/
 .trae/
 *.log
 logs/
+
+# protenix_service 本地密钥、运行数据与编译产物（嵌套模块；不要提交）
+protenix_service/example_files/config_local.yaml
+protenix_service/data/
+protenix_service/protenix_service
