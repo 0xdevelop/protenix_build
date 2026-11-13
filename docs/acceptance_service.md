@@ -1,5 +1,51 @@
 # 第三阶段服务验收
 
+## 队列/缓存/限流/重启恢复诊断（2026-11-14 04:03 Asia/Singapore）
+
+在不改服务代码、不改 `build_srcs`、不改三仓、不装 MySQL/Redis、不改 Task 契约、不跑 GPU、不改本机 `config_local.yaml` 的前提下，对照模板已有实现与现有单元测试，诊断第三阶段仍未端到端验收的「持久异步队列、缓存、重启恢复、限流取消超时」。未重复 JSON-RPC/MCP/WebSocket/gRPC 门禁矩阵，未启动服务，未 enable systemd。本机 `config_local.yaml` 的 sha256 仍为 `684b906075c72cd76806cafd645bb7da9c6ac6b235550b5e77eaf15f0e31bf6c`（`auth_cfg.enabled=false`，`email.api_key`/`from` 为空，mysql/redis 均未启用）。桌面 Cursor worker 仍挂在既有仓库，不是本切片。
+
+原始记录：`tmp/handoff-followup/phase3-service/policy-queue-cache-diagnosis/`（不含密钥）。
+
+### 本机条件
+
+| 检查 | 结果 |
+| --- | --- |
+| 三仓与父仓 | 均与 `origin/main` 同步且工作区干净；三仓仍为约定提交 `ebef2c6` / `c11c797` / `e249edf` |
+| MySQL / MariaDB | 不在 PATH，服务未 active，无对应发行包 |
+| Redis | 不在 PATH，无对应发行包 |
+| CPU | `nproc=20` |
+| 工具链 | `GOTOOLCHAIN=auto`，本轮测试使用 go 1.26.10 linux/arm64 |
+
+### 单元测试（不连外部库、不启服务）
+
+`go test ./policy ./policy/policy_config ./ability/ability_task ./storage ./config -count=1 -timeout 120s` 退出码 0。
+
+| 包 | 结果 |
+| --- | --- |
+| `policy` | ok，0.014s；`TestPolicyStopInterruptsPollingWait`、`TestPolicyMaintenanceDrain` 通过 |
+| `policy/policy_config` | ok，0.003s；`TestCurrentMaxWorkers` 在缺省、非法与 `workers_scaller=5` 下均等于 `NumCPU() × 倍率` |
+| `ability_task` | ok，0.256s；`TestTaskRejectsSqliteWithoutMysql` 再次确认无 MySQL 时受理/执行失败，且任务不写入 SQLite |
+| `storage` | ok，0.382s |
+| `config` | ok，0.032s |
+
+### 代码对照结论
+
+| 第三阶段项 | 模板现有实现 | 本机可验收边界 |
+| --- | --- | --- |
+| 持久异步队列 | Task 受理、认领、查询、取消均走 `storage.MysqlDB`；认领文档要求 MySQL 8.0+ `FOR UPDATE SKIP LOCKED` | 无 MySQL 时 HTTP 异步路径进不了 Execute。未装 MySQL，也未把 Task 改走 SQLite |
+| 重启恢复 | `policy` 仅在 `MysqlDB` 成功时调用 `RequeueOrphanedTasks`，把本进程 in-flight 之外的 `running` 任务重置回 `queued` 后重放输入。无 MySQL 时该分支跳过 | 没有端到端杀进程再恢复的证据 |
+| 缓存 | 可选 Redis 存储引擎，示例配置 `enabled: false`。`ability/`、`api/`、`common/` 无 `storage.Redis` / `RedisDatabase` 调用 | 没有预测/设计结果缓存，也没有 Redis 连接验收。未安装或启用 Redis |
+| 限流 | 异步并发上限 = `policy_cfg.workers_scaller` × `NumCPU()`。示例配置倍率为 5 时，本机计算上限为 100。文档写明普通 API 不受该名额影响。另有验证码 `hourly_send_limit` | 并发上限只有公式与单元测试，没有带队列的端到端打满证据。真实发码限流仍缺 Resend 凭证 |
+| 取消/超时 | `task.cancel` 只取消 `queued`；Worker 对已认领任务使用 `context.WithoutCancel`。进程组取消与 `cancel_grace_seconds` 见既有 `cli_proc` 切片 | 本切片不接执行中取消，不改 Task 契约 |
+
+### 仍然有效的边界
+
+- 真实注册/登录与签发 `ptxk_` 仍缺 Resend 的 `email.api_key` 与 `from`。不要使用用户 Gmail。
+- 无 MySQL 时不能验收持久队列、重启恢复与异步并发上限的端到端行为。
+- 不宣称生产级队列、缓存、限流或恢复。本切片不是第四阶段。
+
+---
+
 ## gRPC APIService.Call 门禁验收（2026-11-14 03:01 Asia/Singapore）
 
 在不改服务代码、不改 `build_srcs`、不改三仓、不装 MySQL、不改 Task 契约、不跑 GPU、不把邮件密钥写入仓库的前提下，临时把忽略文件 `example_files/config_local.yaml` 的 `auth_cfg.enabled` 设为 `true`，SQLite 改到隔离库 `./tmp/grpc-call-accept/protenix_service.db`，复用第七轮已构建的 `protenix_service` 二进制（2026-11-14 01:56，未重建），以 Debug 模式短时启动服务（`127.0.0.1:18001`–`18006`）。用仓库外的一次性 Go 客户端（`APIService` 已生成 stub：`github.com/0xdevelop/protenix_service/api/api_grpc/protobuf`）对 `127.0.0.1:18005` 实际调用 `APIService.Call`。本机无 `grpcurl`，未安装系统包，也未启用 systemd。验完已恢复原配置（`enabled: false`、原库路径，sha256 与改前一致），未留下进程、监听端口或含密钥的备份。桌面 Cursor worker 仍挂在既有仓库，不是本切片。
