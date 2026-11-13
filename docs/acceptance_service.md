@@ -1,5 +1,60 @@
 # 第三阶段服务验收
 
+## 官方 CLI 经 Execute 的短命令与故障输入（2026-11-14 00:55–00:57 Asia/Singapore）
+
+在不改 `build_srcs`、不改三仓与仓库 `prefix/`、不装 MySQL、不改 Task 契约、不跑 GPU 长预测的前提下，用 7d208af 干净发布包在临时前缀安装官方包装命令，并把 `cli_cfg.*.binary` 指到真实 `protenix-run` / `pxdesign-run`，直接调用 `Execute`。未改本机 `config_local.yaml`，未启动 systemd。桌面 Cursor worker 仍挂在既有仓库，不是本切片。
+
+发布包：`build/upload_tmp_dir/protenix_linux_arm64_release_v0.0.1.zip` 与同目录 `pxdesign_linux_arm64_release_v0.0.1.zip`（`BUILD_INFO.commit=7d208afe550972486b35985cb1de2a5377b85cf5`，`dirty=0`）。临时目录 `/home/certa/pkg_accept_cli`，`WEIGHTS_REUSE_FROM=/home/certa/workspace/protenix_build/prefix`。原始记录：`tmp/handoff-followup/phase3-service/official-cli-execute-result.txt`。开始时 GPU 利用率 0%，本机 ComfyUI 约 170MiB 驻留，未结束该进程。
+
+### 安装与帮助
+
+| 检查 | 结果 |
+| --- | --- |
+| Protenix 安装前 status | rc=1，未安装 |
+| `PROTENIX_PREFIX=... WEIGHTS_REUSE_FROM=... install_protenix.sh install` | rc=0，墙钟 49.094s；版本 `v0.0.1-7d208afe5509`，状态：可运行 |
+| PXDesign 安装前 status | rc=1，未安装 |
+| `PXDESIGN_PREFIX=... WEIGHTS_REUSE_FROM=... install_pxdesign.sh install` | rc=0，墙钟 38.969s；版本 `v0.0.1-7d208afe5509`，状态：可运行 |
+| `protenix-run pred --help` | rc=0，1.648s，无 CIF |
+| `pxdesign-run pipeline --help` | rc=0，0.065s，无 CIF |
+| 仓库 `prefix/` 快照 | 安装、试跑前后一致 |
+| `uninstall --purge` | 两个前缀 rc=0，临时目录已删 |
+
+### 官方包装命令直接试跑
+
+| 检查 | 退出码 | 墙钟 | CIF / ERR 文件 | 说明 |
+| --- | --- | --- | --- | --- |
+| Protenix 缺输入文件 | 1 | 1.619s | 0 / 0 | 不是 CLI 参数校验失败；日志写了 infer 启动后报 `Can not read a special file` |
+| PXDesign 缺输入文件 | 2 | 0.039s | 0 / 0 | Click：`--input` 文件不存在 |
+| Protenix 非法 JSON | 0 | 30.343s | 0 / 0 | 先初始化环境并加载 `protenix_base_default_v1.0.0.pt`，再报 JSON 解析失败。包装命令只在 `ERR/` 非空时改退出码为 3，本例仍为 0 |
+| PXDesign 非法 YAML | 1 | 7.994s | 0 / 0 | `ValueError: Error parsing YAML file: mapping values are not allowed here` |
+| 非法输入原文件 | — | — | — | 内容与 mtime 均未变 |
+
+直接试跑结束后 GPU 利用率仍为 0%。非法 JSON 虽然不是长预测，但会加载权重，约 30s。
+
+### 经 Execute 调用（不走 HTTP）
+
+无 MySQL，HTTP 异步受理仍不会进入 `Execute`，本切片直接调 `Execute`。`version=v1` 只作方法参数。
+
+| 检查 | 结果 |
+| --- | --- |
+| Protenix / PXDesign 缺必填 `input` | `Execute` 返回 `invalid arguments`，未启动进程（17ms / 3ms） |
+| 输入路径不存在 | 启动进程前失败：`input path is not accessible`（0s） |
+| Protenix 非法 JSON | argv 为 `protenix-run pred --input <隔离副本> --out_dir <作业 output/>`，**不含** `version`；墙钟 30.65s；`exit_code=0`，`cif_count=0`，`has_err=true`，`cancelled=false`；原文件未改 |
+| PXDesign 非法 YAML | argv 为 `pxdesign-run pipeline --input <隔离副本> --dump_dir <作业 output/> --preset preview`；墙钟 3.27s；`exit_code=1`，`cif_count=0`，`has_err=false`；原文件未改 |
+
+说明：`has_err=true` 只表示输出目录中存在名为 `ERR` 的目录，即使其中没有文件。官方包装命令只在 `ERR/` 非空时把退出码改为 3。本例 Protenix 非法 JSON 仍是退出码 0、无 CIF，必须同时看退出码、CIF、ERR 和运行日志。
+
+探针里 `BuildArgvForTest` 与 `Execute` 会各自生成 task id，因此打印出的 argv 作业目录与 `payload.job_dir` 不是同一次调用；这不影响「version 不进 CLI」的结论。缺必填 `input` 时，`Execute` 先校验失败；探针额外调用的 `BuildArgvForTest` 不走该校验，空路径被解析为服务工作目录，并因拒绝拷贝 `logs/` 下符号链接而报错。这不是 HTTP 或 `Execute` 受理路径。
+
+### 仍然有效的边界
+
+- 无 MySQL 时 HTTP 异步受理仍为 `storage_mysql is not enabled`，没有端到端 HTTP→推理证据。
+- 模板 `task.cancel` 仍只取消排队任务；执行中取消须另改契约，本切片不做。
+- 本切片没有成功的结构预测或设计产物，不宣称生产级推理或全部安全。原生结果不能只看出时码。
+- Protenix v2 缺授权权重，本地不能宣称 v2 跑通。
+
+---
+
 ## CLI 接线与进程组取消（2026-11-13 23:56 Asia/Singapore）
 
 在已提交的 `protenix_service` 骨架上接线命令组装与进程组跑步器。未改 `build_srcs`、未改三仓、未改模板 Task 契约、未安装 MySQL、未跑 GPU、未把本机 `config_local.yaml` 指向真实推理二进制。
@@ -30,7 +85,7 @@
 ### 仍然有效的边界
 
 - 模板 `task.cancel` 只取消 `queued` 任务，执行中任务不可取消。Worker 对已认领任务使用 `context.WithoutCancel`。要把进程组取消接到 `task.cancel` 或停机信号，需要另行决定并改契约，本切片不做。
-- 无 MySQL 时服务受理失败，本机未启用真实 `cli_cfg.*.binary`，因此没有端到端 HTTP→GPU 推理证据。
+- 无 MySQL 时服务受理失败，因此没有端到端 HTTP→推理证据。真实 `cli_cfg.*.binary` 的短命令与故障输入见上文 2026-11-14 切片。
 - 不宣称生产级取消或全部安全。
 
 ---
