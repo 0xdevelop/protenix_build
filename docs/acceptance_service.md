@@ -1,5 +1,58 @@
 # 第三阶段服务验收
 
+## auth 门禁启用后的注册/登录路径（2026-11-14 01:56–01:57 Asia/Singapore）
+
+在不改 `build_srcs`、不改三仓、不装 MySQL、不改 Task 契约、不跑 GPU、不把邮件密钥写入仓库的前提下，临时把忽略文件 `example_files/config_local.yaml` 的 `auth_cfg.enabled` 设为 `true`，SQLite 改到隔离库 `./tmp/auth-login-accept/protenix_service.db`，以 Debug 模式短时启动服务（`127.0.0.1:18001`–`18006`），验证门禁与注册/登录前置路径。验完已恢复原配置（`enabled: false`、原库路径），未留下进程或监听端口，未 enable systemd。桌面 Cursor worker 仍挂在既有仓库，不是本切片。
+
+本机该文件的 `auth_cfg.email.api_key` 与 `from` 均为空；邮件通道当前只支持 `resend`。因此不能完成真实发码、注册、登录后再调受保护方法。没有伪造邮件供应商，也没有为此改模板契约。
+
+原始记录：`tmp/handoff-followup/phase3-service/auth-login/`（结果已脱敏，不含密钥）。
+
+### 构建与单元测试
+
+| 检查 | 结果 |
+| --- | --- |
+| `go test ./api/api_auth/... ./ability/ability_user ./config` | 退出码 0；`api_auth_api_key` 1.384s、`api_auth_bridge` 0.008s、`config` 0.020s；其余子包无测试文件 |
+| `go build -o protenix_service .` | 退出码 0，约 4.4s |
+
+### JSON-RPC（`POST http://127.0.0.1:18001/`）
+
+下列调用的 HTTP 状态均为 200，业务结果在统一 `CallToolResult` 里（`isError` / `error_code`）。
+
+| 调用 | 结果 |
+| --- | --- |
+| Public `test`，无凭证 | `isError=false`，`this is test method, request is success`（14ms） |
+| Public `test`，携带伪造 `Authorization: Bearer` | 同样成功；Public 方法不因假凭证失败 |
+| 受保护 `protenix` / `pxdesign` / `task.list` / `auth.jwt_token.check`，无凭证 | `error_code=10004` `permission denied`，未进入异步受理或 Execute |
+| 受保护 `protenix`，伪造 JWT 或伪造 `ptxk_` | 均为 `10004` `permission denied` |
+| Public `auth.verify_code.send.email`（`auth-accept@example.invalid`） | `error_code=10005` `verification code delivery failed`。服务日志：`auth_cfg.email.api_key is empty`，随后 `auth operation failed: load email config`。响应不回传缺键细节 |
+| Public `auth.register`（虚构验证码 `000000`） | `error_code=10003` `invalid arguments` |
+| Public `auth.login.email`（未知邮箱+密码） | `error_code=10004` `permission denied`，未暴露账户是否存在 |
+| `name=/v1/protenix` | `error_code=10001` `method not found` |
+
+### 其他协议
+
+| 检查 | 结果 |
+| --- | --- |
+| MCP `POST http://127.0.0.1:18002/`（不是 `/mcp`），带 `Mcp-Protocol-Version: 2026-07-28` 等握手后请求头 | Public `test` 成功；`protenix` 无凭证返回 `10004`。此前误打 `POST /mcp` 得到空 body，不能当作验收 |
+| WebSocket `ws://127.0.0.1:18004/`，`Origin: http://127.0.0.1:18004` | 握手 101，Public `test` 成功 |
+| 同一 WebSocket，`Origin: http://127.0.0.1`（无端口） | 握手 403；日志：`Origin "127.0.0.1" is not authorized for Host "127.0.0.1:18004"`。配置允许 `127.0.0.1:*` / `localhost:*`，无端口的 Origin 不匹配 |
+| test_ui `GET http://127.0.0.1:18003/` | HTTP 200，`text/html` |
+| frontend `GET http://127.0.0.1:18006/` | HTTP 200，`text/html` |
+| gRPC `127.0.0.1:18005` | 端口在听；本机无 `grpcurl`，未做 `APIService.Call` 实测 |
+
+test_ui / frontend 本切片只验页面可打开，没有通过页面完成一次带登录的真实方法调用。这不是第四阶段交付。
+
+### 仍然有效的边界
+
+- 真实注册/登录仍缺 Resend 的 `email.api_key` 与 `from`。本机常驻 `config_local.yaml` 因此保持 `auth_cfg.enabled=false`，以免在无邮件配置时让后续未认证探测误判。
+- 无 MySQL 时，即使通过门禁，HTTP 异步受理仍不会进入 `Execute`。
+- 没有签发真实 `ptxk_` API key，也没有成功的登录 session。不宣称生产级认证或全部安全。
+- 未改模板 Task 契约，未装 MySQL，未跑 GPU。
+
+---
+
+
 ## 官方 CLI 经 Execute 的短命令与故障输入（2026-11-14 00:55–00:57 Asia/Singapore）
 
 在不改 `build_srcs`、不改三仓与仓库 `prefix/`、不装 MySQL、不改 Task 契约、不跑 GPU 长预测的前提下，用 7d208af 干净发布包在临时前缀安装官方包装命令，并把 `cli_cfg.*.binary` 指到真实 `protenix-run` / `pxdesign-run`，直接调用 `Execute`。未改本机 `config_local.yaml`，未启动 systemd。桌面 Cursor worker 仍挂在既有仓库，不是本切片。
