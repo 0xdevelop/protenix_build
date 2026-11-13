@@ -38,25 +38,23 @@ TORCH_SPEC=(torch==2.14.1+cu130 torchvision==0.29.1+cu130)
 EXTRA_REQS=(cuequivariance-ops-torch-cu13)
 NO_BUILD_ISOLATION_PKGS=(deepspeed)
 
-src_is_git_root() {
-  local top
-  top="$(git -C "${SRC}" rev-parse --show-toplevel 2>/dev/null)" || return 1
-  [[ "$(readlink -f "${top}")" == "$(readlink -f "${SRC}")" ]]
-}
-
 die() { echo "${TAG} FAIL: $*" >&2; exit 1; }
 
 resolve_src() {
   if [[ -n "${PROTENIX_SRC:-}" ]]; then
     SRC="${PROTENIX_SRC}"
+    SRC_MODE="${PROTENIX_SRC_MODE:-copy}"
     return 0
   fi
   if [[ -f "${ROOT}/src/SRC_SHA" && -f "${ROOT}/src/protenix/setup.py" ]]; then
     SRC="${ROOT}/src/protenix"
+    SRC_MODE=copy
+    SRC_SHA_FILE="${ROOT}/src/SRC_SHA"
     return 0
   fi
   if [[ -n "${REPO_PROTENIX_SRC:-}" && -f "${REPO_PROTENIX_SRC}/setup.py" ]]; then
     SRC="${REPO_PROTENIX_SRC}"
+    SRC_MODE=git
     return 0
   fi
   die "no Protenix source (set PROTENIX_SRC, or use a release package with src/protenix)"
@@ -81,12 +79,12 @@ resolve_src_sha() {
   if [[ -n "${SRC_SHA:-}" ]]; then
     return 0
   fi
-  if [[ -f "${ROOT}/src/SRC_SHA" ]]; then
-    SRC_SHA="$(tr -d '[:space:]' < "${ROOT}/src/SRC_SHA")"
-    [[ -n "${SRC_SHA}" ]] || die "empty ${ROOT}/src/SRC_SHA"
+  if [[ -n "${SRC_SHA_FILE:-}" ]]; then
+    SRC_SHA="$(tr -d '[:space:]' < "${SRC_SHA_FILE}")"
+    [[ -n "${SRC_SHA}" ]] || die "empty ${SRC_SHA_FILE}"
     return 0
   fi
-  if src_is_git_root; then
+  if [[ "${SRC_MODE}" == git ]]; then
     SRC_SHA="$(git -C "${SRC}" rev-parse HEAD)"
     return 0
   fi
@@ -99,11 +97,22 @@ stage_upstream_src() {
   fi
   rm -rf "${STAGE}.partial"
   mkdir -p "${STAGE}.partial"
-  if src_is_git_root; then
-    git -C "${SRC}" archive --format=tar HEAD | tar -x -C "${STAGE}.partial"
-  else
-    cp -a "${SRC}/." "${STAGE}.partial/"
-  fi
+  case "${SRC_MODE}" in
+    git)
+      # 显式 Git 来源只导出指定目录对应的树，绝不导出包含它的整个仓库。
+      local relative tree git_root
+      git_root="$(git -C "${SRC}" rev-parse --show-toplevel)"
+      relative="$(git -C "${SRC}" rev-parse --show-prefix)"
+      tree="${SRC_SHA}${relative:+:${relative%/}}"
+      git -C "${git_root}" archive --format=tar "${tree}" | tar -x -C "${STAGE}.partial"
+      ;;
+    copy)
+      # 包内快照始终复制；所在目录是不是 Git 仓库不改变行为。
+      tar -C "${SRC}" --exclude=./.git -cf - . | tar -x -C "${STAGE}.partial"
+      ;;
+    *) die "invalid PROTENIX_SRC_MODE: ${SRC_MODE} (expected copy or git)" ;;
+  esac
+  [[ -f "${STAGE}.partial/setup.py" ]] || die "staged source is missing setup.py"
   mv "${STAGE}.partial" "${STAGE}"
 }
 
@@ -116,6 +125,7 @@ fi
 
 [[ -f "${OVERRIDES}" ]] || die "override file missing: ${OVERRIDES}"
 resolve_src
+case "${SRC_MODE}" in copy|git) ;; *) die "invalid PROTENIX_SRC_MODE: ${SRC_MODE} (expected copy or git)" ;; esac
 [[ -f "${SRC}/setup.py" ]] || die "Protenix setup.py missing under ${SRC}"
 [[ -x "${CUDA_HOME}/bin/nvcc" ]] || die "nvcc not found under CUDA_HOME=${CUDA_HOME} (CUDA 13 toolkit required)"
 command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found (NVIDIA driver required)"

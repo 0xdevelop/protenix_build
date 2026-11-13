@@ -388,7 +388,7 @@ build_protenix() {
   local src="${project_path}/build_srcs/protenix"
   [[ -d "${src}" ]] || { echo "${TAG} missing ${src}; run git submodule update --init --recursive" >&2; exit 1; }
   echo "${TAG} install ${PROTENIX_PREFIX}"
-  PROTENIX_SRC="${src}" \
+  PROTENIX_SRC="${src}" PROTENIX_SRC_MODE=git \
     SRC_SHA="$(git -C "${src}" rev-parse HEAD)" \
     PROTENIX_OVERRIDES="${project_path}/deps/protenix.txt" \
     bash "${project_path}/scripts/install_prefix_protenix.sh"
@@ -419,7 +419,7 @@ build_pxdesign() {
   local src="${project_path}/build_srcs/pxdesign"
   [[ -d "${src}" ]] || { echo "${TAG} missing ${src}; run git submodule update --init --recursive" >&2; exit 1; }
   echo "${TAG} install ${PXDESIGN_PREFIX} (independent venv; not merged with protenix)"
-  PXDESIGN_SRC="${src}" \
+  PXDESIGN_SRC="${src}" PXDESIGN_SRC_MODE=git \
     SRC_SHA="$(git -C "${src}" rev-parse HEAD)" \
     PXDESIGN_OVERRIDES="${project_path}/deps/pxdesign.txt" \
     bash "${project_path}/scripts/install_prefix_pxdesign.sh"
