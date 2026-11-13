@@ -24,6 +24,7 @@ go build -o protenix_service .
 - Debug 启动读取 `./example_files/config_local.yaml`；工作目录必须是本目录
 - 存储默认只开 SQLite（`storage_cfg.primary: sqlite`，mysql/postgres/redis 为 `enabled: false`）。Auth/User 走主库 SQLite。
 - 模板契约：Async/Task 固定走 `storage.MysqlDB`。未启用 MySQL 时，异步受理返回明确错误（`storage_mysql is not enabled`），不会把任务改写到 SQLite，也不要为此安装 MySQL。
+- 原生 CLI 路径写在 `cli_cfg`（见示例配置），不要在代码或 URL 里写死。`cli_cfg.protenix.binary` / `cli_cfg.pxdesign.binary` 为空时，`Execute` 拒绝启动进程。作业输入会拷贝到 `cli_cfg.work_root/<task_id>/input/`，输出写到同任务的 `output/`，不修改原输入文件。`version` 仍只作方法参数，不作为 CLI 开关。
 - `example_files/config_local.yaml` 与 `data/` 已加入忽略规则，不要提交密钥或 SQLite 数据文件。
 
 默认端口（示例配置）：JSON-RPC `13001`、MCP `13002`、test_ui `13003`、WebSocket `13004`、gRPC `13005`、frontend `13006`。test_ui 与 frontend 默认只绑定 `127.0.0.1`。本机验收如需避开占用，可在 `config_local.yaml` 改为 `18001`–`18006`。
@@ -73,4 +74,4 @@ JSON-RPC 示例（Public `test`）：
 
 向 `http://127.0.0.1:<jsonrpc-port>/` 发 POST。方法清单见 `docs/api_methods.md`（由 `./gen_api_docs.sh` 生成，不要手改）。
 
-当前 `protenix` / `pxdesign` 仅做参数校验与异步受理。受理在未启用 MySQL 时失败；即便以后启用队列，Execute 也会明确返回「尚未接线到原生 CLI」，不会调用 `protenix-run pred` 或 `pxdesign-run pipeline`。
+HTTP/JSON-RPC 调用 `protenix` / `pxdesign` 仍先走异步受理：未启用 MySQL 时失败，不会进入 `Execute`。直接调用 `Execute` 时，若已配置对应 `cli_cfg.*.binary`，会在新进程组中启动 `protenix-run pred` 或 `pxdesign-run pipeline`；context 取消时向整个进程组发 SIGTERM，超时后再发 SIGKILL。模板 `task.cancel` 仍只取消排队中的任务，执行中任务不可取消；Worker 对已认领任务使用不会取消的 context。原生结果要同时看退出码、CIF 和 ERR，不能只看退出码。不要把未配置真实二进制或未跑 GPU 的检查当成生产级推理验收。

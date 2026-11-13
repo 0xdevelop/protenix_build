@@ -50,6 +50,7 @@ type FileConfig struct {
 	TestUICfg   *TestUIConfig                     `yaml:"test_ui_cfg" json:"test_ui_cfg" toml:"test_ui_cfg" comment:"开发测试台"`
 	AuthCfg     *api_auth_config.AuthConfig       `yaml:"auth_cfg" json:"auth_cfg" toml:"auth_cfg" comment:"Auth configurations"`
 	PolicyCfg   *policy_config.PolicyConfig       `yaml:"policy_cfg" json:"policy_cfg" toml:"policy_cfg" comment:"Policy scheduling configurations"`
+	CliCfg      *CLIConfig                        `yaml:"cli_cfg" json:"cli_cfg" toml:"cli_cfg" comment:"原生 CLI 接线（protenix-run / pxdesign-run）"`
 }
 
 func buildYAMLCommentMap(cfg interface{}, parentPath string) yaml.CommentMap {
@@ -289,6 +290,7 @@ func generateDefaultConfig() *FileConfig {
 			PolicyDuration: "10s",
 			WorkersScaller: 1,
 		},
+		CliCfg: DefaultCLIConfig(),
 		AuthCfg: &api_auth_config.AuthConfig{
 			Enabled:  &authGateEnabledDefault,
 			AuthType: api_auth_config.AuthTypeJWT,

@@ -741,7 +741,7 @@ MCP 凭证使用 HTTP 头，`tools/list` 只暴露业务入参，不含 `jwt_tok
 
 # 7. protenix
 
-提交 Protenix 结构预测任务（对应 CLI：protenix-run pred）。本切片尚未接线到原生 CLI；异步队列固定走 MySQL，未启用时受理失败。
+提交 Protenix 结构预测任务（对应 CLI：protenix-run pred）。版本/模型走 arguments。异步队列固定走 MySQL，未启用时受理失败。未配置 cli_cfg.protenix.binary 时 Execute 拒绝启动进程。
 
 异步方法：受理后返回 `task_id`，进度与结果经任务查询方法读取。
 
@@ -793,7 +793,7 @@ MCP 凭证使用 HTTP 头，`tools/list` 只暴露业务入参，不含 `jwt_tok
       "type": "string"
     },
     "out_dir": {
-      "description": "结果输出目录。对应 CLI -o/--out_dir。",
+      "description": "调用方给出的结果目录名；实际写入隔离作业目录下的 output/，不直接改原输入。对应 CLI -o/--out_dir。",
       "maxLength": 4096,
       "minLength": 1,
       "type": "string"
@@ -821,7 +821,7 @@ MCP 凭证使用 HTTP 头，`tools/list` 只暴露业务入参，不含 `jwt_tok
       "type": "boolean"
     },
     "version": {
-      "description": "产品版本（v1/v2），不是 URL 路径。缺省 v1。v2 需要授权权重。",
+      "description": "产品版本（v1/v2），不是 URL 路径。缺省 v1。v2 需要授权权重。不作为 CLI 开关传入。",
       "enum": [
         "v1",
         "v2"
@@ -839,7 +839,7 @@ MCP 凭证使用 HTTP 头，`tools/list` 只暴露业务入参，不含 `jwt_tok
 
 # 8. pxdesign
 
-提交 PXDesign 设计流水线任务（对应 CLI：pxdesign-run pipeline）。本切片尚未接线到原生 CLI；异步队列固定走 MySQL，未启用时受理失败。
+提交 PXDesign 设计流水线任务（对应 CLI：pxdesign-run pipeline）。preset 走 arguments。异步队列固定走 MySQL，未启用时受理失败。未配置 cli_cfg.pxdesign.binary 时 Execute 拒绝启动进程。
 
 异步方法：受理后返回 `task_id`，进度与结果经任务查询方法读取。
 
@@ -881,7 +881,7 @@ MCP 凭证使用 HTTP 头，`tools/list` 只暴露业务入参，不含 `jwt_tok
       "type": "string"
     },
     "dump_dir": {
-      "description": "结果输出目录。对应 CLI -o/--dump_dir。",
+      "description": "调用方给出的结果目录名；实际写入隔离作业目录下的 output/。对应 CLI -o/--dump_dir。",
       "maxLength": 4096,
       "minLength": 1,
       "type": "string"

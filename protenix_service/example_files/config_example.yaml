@@ -80,3 +80,14 @@ auth_cfg: # Auth configurations
     audience: "protenix_service"
     access_token_ttl_seconds: 900
     refresh_token_ttl_seconds: 2592000
+
+cli_cfg: # 原生 CLI 接线（protenix-run / pxdesign-run）。binary 为空时 Execute 拒绝启动进程，不猜路径。
+  work_root: "./data/cli_jobs" # 每任务作业目录根路径；输入会拷贝到子目录，不改原文件
+  cancel_grace_seconds: 10 # 向进程组发 SIGTERM 后、再发 SIGKILL 的等待秒数
+  protenix:
+    binary: "" # 已安装的 protenix-run 路径
+    extra_env: {}
+  pxdesign:
+    binary: "" # 已安装的 pxdesign-run 路径
+    extra_env: {}
+

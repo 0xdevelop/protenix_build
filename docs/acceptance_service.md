@@ -1,3 +1,40 @@
+# 第三阶段服务验收
+
+## CLI 接线与进程组取消（2026-11-13 23:56 Asia/Singapore）
+
+在已提交的 `protenix_service` 骨架上接线命令组装与进程组跑步器。未改 `build_srcs`、未改三仓、未改模板 Task 契约、未安装 MySQL、未跑 GPU、未把本机 `config_local.yaml` 指向真实推理二进制。
+
+原始测试输出：`tmp/handoff-followup/phase3-service/cli-proc-ability-test.log`、`config-test.log`。
+
+### 方案与实现
+
+- 新增 `cli_proc`：`Setpgid` 启动命令；context 取消时向整个进程组发 SIGTERM，超时后再发 SIGKILL。包装壳先退出而同组子进程仍在时，`Run` 会回收残留成员。
+- 结构化配置 `cli_cfg`（`config/cli_config.go`，已写入 `example_files/config_example.yaml` 与 `generateDefaultConfig`）。`binary` 为空则 `Execute` 拒绝启动进程，不猜安装路径。
+- `protenix` / `pxdesign` 的 `Execute` 按 CLI 长选项组装 argv；`version` 不进入命令行。输入拷贝到 `work_root/<task_id>/input/`，输出写到同任务 `output/`，原输入内容与 mtime 不变。
+- 结果附带退出码、是否取消、`cif_count`、`has_err`。原生成功不能只看退出码。
+
+### 实测（短命令，非 GPU）
+
+| 检查 | 结果 |
+| --- | --- |
+| `go test ./cli_proc ./ability/ability_protenix ./ability/ability_pxdesign ./ability/ability_task ./config` | 退出码 0 |
+| 取消整组 | `TestCancelSignalsWholeProcessGroup`：包装壳与子进程都退出 |
+| 只向包装壳发 SIGTERM | `TestSignalWrapperOnlyLeavesChildRunning`：子进程仍在，复现此前 PXDesign 取消边界 |
+| 包装壳被杀后由 Run 回收 | `TestRunReapsLeftoversWhenWrapperDies`：残留子进程被回收 |
+| 输入隔离 | `TestStageInputCopiesAndLeavesOriginalUnchanged`、`TestBuildArgvOmitsVersionAndStagesInput` |
+| 未配置 binary | `Execute` 返回 `CLI binary is not configured` |
+| 配置占位脚本 | dummy `Execute` 退出码 0，并能报告 CIF；context 取消时进程停止 |
+| 无 MySQL 的异步受理 | 仍为 `storage_mysql is not enabled`，HTTP 路径不会进入 Execute |
+| `go build -o protenix_service .` | 退出码 0 |
+
+### 仍然有效的边界
+
+- 模板 `task.cancel` 只取消 `queued` 任务，执行中任务不可取消。Worker 对已认领任务使用 `context.WithoutCancel`。要把进程组取消接到 `task.cancel` 或停机信号，需要另行决定并改契约，本切片不做。
+- 无 MySQL 时服务受理失败，本机未启用真实 `cli_cfg.*.binary`，因此没有端到端 HTTP→GPU 推理证据。
+- 不宣称生产级取消或全部安全。
+
+---
+
 # 第三阶段服务骨架验收（本切片）
 
 记录时间：2026-11-13 23:03 Asia/Singapore (UTC+8)  
